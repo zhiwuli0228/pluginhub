@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "插件管理中心",
+    "description": "统一的插件与 Agent 运行时管理器：跨 MCP、A2A、Agent Skills 等协议的发现、编排、安全治理与智能调度。"
+  }
+}

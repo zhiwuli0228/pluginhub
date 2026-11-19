@@ -1,0 +1,80 @@
+{
+  "name": "dsh-pluginhub",
+  "version": "0.1.0",
+  "description": "Local-first plugin and agent runtime manager: unified discovery, automatic process orchestration, security governance, and intelligent routing across MCP, A2A, Agent Skills, OpenAPI, and more. Ships as a DSH plugin with standalone CLI.",
+  "license": "MIT",
+  "author": "zhiwuli0228",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "pluginhub": "dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/index.js",
+    "dist/cli.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20",
+    "dsh": ">=0.2.1-rc.5 <0.3.0-0 || >=0.2.2-0 <0.3.0-0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run build && npm run test"
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "agent-runtime",
+    "plugin-manager",
+    "mcp",
+    "a2a",
+    "agent-skills",
+    "process-orchestrator"
+  ],
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "esbuild": "^0.25.9",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4",
+    "yaml": "^2.8.1",
+    "zod": "^3.25.76"
+  }
+}

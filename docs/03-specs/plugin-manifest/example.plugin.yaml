@@ -1,0 +1,209 @@
+# Plugin Manifest 参考示例
+# 校验：python -c "import yaml,jsonschema; ..." 或任意 JSON Schema 2020-12 校验器
+# 说明：本示例刻意覆盖全部顶层段，便于作为"最大合法清单"回归用例。
+
+apiVersion: plugin.agenthub.io/v1alpha1
+kind: Plugin
+
+metadata:
+  id: com.acme.deploy-assistant
+  name: deploy-assistant
+  displayName:
+    zh-CN: 部署助手
+    en-US: Deploy Assistant
+  version: 1.2.0
+  description: >-
+    为 SRE 提供发布前检查、灰度发布与一键回滚。当用户提到「发版 / 上线 / 灰度 / 回滚」，
+    或提交涉及 release 分支的 PR 时使用；不适用于数据库迁移与基础设施变更。
+  publisher:
+    name: ACME Platform Team
+    domain: acme.com
+    did: did:web:acme.com
+    contact: platform@acme.com
+  license: Apache-2.0
+  homepage: https://docs.acme.com/plugins/deploy-assistant
+  repository: https://github.com/acme/deploy-assistant
+  keywords: [deploy, release, rollback, sre]
+  icon: ./assets/icon.svg
+
+discovery:
+  wellKnown:
+    - path: /.well-known/ai-catalog.json
+      entryId: did:web:acme.com#deploy-assistant
+      mediaType: application/ai-plugin+json
+    - path: /.well-known/mcp/server-card
+      mediaType: application/mcp-server+json
+    - path: /.well-known/mcp.json
+  registries:
+    - type: mcp-registry
+      name: io.github.acme/deploy-assistant
+    - type: agntcy-dir
+      cid: bafkreiabcdefghijklmnopqrstuvwxyz234567
+  mediaTypes:
+    - application/ai-plugin+json
+    - application/mcp-server+json
+
+components:
+  skills:
+    - id: deploy-service
+      format: agent-skills/1.0
+      path: ./skills/deploy-service
+  mcpServers:
+    - id: deploy-api
+      format: mcp/2026-07-28
+      config: ./mcp.json
+  openapi:
+    - id: deploy-rest
+      document: ./openapi.yaml
+      baseUrl: https://api.acme.com/v2
+      operations: [createDeployment, getDeployment, rollbackDeployment]
+      exposure: meta-tools
+  agents:
+    - id: sre-agent
+      format: a2a/1.0
+      card: ./agent-card.json
+      url: https://sre.acme.com/a2a/v1
+      binding: JSONRPC
+  workflows:
+    - id: safe-release
+      format: arazzo/1.0
+      path: ./workflows/safe-release.yaml
+  apps:
+    - id: release-dashboard
+      format: mcp-apps/2026-01-26
+      extension: io.modelcontextprotocol/ui
+      resourceUri: ui://deploy/dashboard.html
+      fallback: text
+
+runtime:
+  activation: lazy
+  entrypoints:
+    - id: local
+      transport: stdio
+      command: ./bin/deploy-server
+      args: ["--data", "${PLUGIN_DATA}"]
+      cwd: "${PLUGIN_ROOT}"
+      env:
+        LOG_LEVEL: info
+        ACME_REGION: "${config.region}"
+      platforms: [linux-x64, darwin-arm64, win32-x64]
+    - id: hosted
+      transport: streamable-http
+      url: https://mcp.acme.com/mcp
+      protocolVersions: ["2026-07-28", "2025-06-18"]
+  selection: prefer-local
+  health:
+    probe: mcp-server-discover
+    path: /mcp
+    intervalSeconds: 30
+    timeoutSeconds: 5
+    failureThreshold: 3
+  lifecycle:
+    startTimeoutSeconds: 20
+    idleTimeoutSeconds: 900
+    restartPolicy: on-failure
+    maxRestarts: 3
+    shutdownGraceSeconds: 10
+  resources:
+    cpu: "0.5"
+    memory: 512Mi
+  sandbox:
+    profile: restricted
+    filesystem:
+      read: ["${PLUGIN_ROOT}"]
+      write: ["${PLUGIN_DATA}"]
+    network:
+      egress: [api.acme.com, sre.acme.com]
+
+permissions:
+  - id: fs.read.workspace
+    scope: workspace
+    reason: 读取发布清单与变更日志
+  - id: net.egress
+    hosts: [api.acme.com, sre.acme.com]
+    methods: [GET, POST]
+  - id: exec
+    commands: [./bin/deploy-server]
+    reason: 本地启动 MCP server
+  - id: secrets.read
+    refs: [acme/deploy-token]
+    ttlSeconds: 3600
+    reason: 调用发布 API
+  - id: artifact.write
+    scope: "${PLUGIN_DATA}/releases"
+
+trust:
+  signing:
+    algorithm: ES256
+    keyId: did:web:acme.com#key-1
+    signatureRef: ./plugin.yaml.sig
+    signedFields: [metadata, components, runtime]
+  integrity:
+    algorithm: sha256
+    digest: 9f2c1e7b4a6d8f0c2b5e7a9d1f3c5b7e9a1d3f5c7b9e1a3d5f7c9b1e3a5d7f9c
+  provenance:
+    type: slsa/v1
+    uri: https://github.com/acme/deploy-assistant/attestations/12345
+  attestations:
+    - type: soc2-type2
+      uri: https://trust.acme.com/soc2.pdf
+  publisherVerification:
+    method: well-known-jwks
+    uri: https://acme.com/.well-known/jwks.json
+
+routing:
+  intents:
+    - id: release-to-staging
+      examples:
+        - 把这个服务发到预发
+        - deploy payments-api to staging
+        - 灰度 10% 流量到新版本
+      capabilityRefs:
+        - skill:deploy-service
+        - tool:deploy-api.createDeployment
+        - workflow:safe-release
+      mode: workflow
+      costHint: low
+      latencyHint: minutes
+      requiresApproval: true
+      destructive: false
+    - id: rollback-release
+      examples:
+        - 回滚上一个版本
+        - roll back the last release
+      capabilityRefs:
+        - workflow:safe-release
+        - tool:deploy-api.rollbackDeployment
+      mode: workflow
+      requiresApproval: true
+      destructive: true
+  triggers:
+    - type: event
+      source: github.pull_request
+      filter: "action == 'closed' && merged == true && base.ref == 'release'"
+      capabilityRefs: [workflow:safe-release]
+    - type: schedule
+      cron: "0 9 * * MON"
+      capabilityRefs: [skill:deploy-service]
+  concurrency:
+    maxParallel: 2
+    exclusiveWith: [com.acme.legacy-deploy]
+  context:
+    tokenBudgetHint: 1200
+    toolNamePrefix: acme_deploy
+
+compatibility:
+  minManagerVersion: ">=1.4.0"
+  protocols:
+    mcp: ["2026-07-28", "2025-06-18"]
+    a2a: ["1.0"]
+    agentSkills: "1.0"
+    agentPlugins: "1.0.0"
+  platforms: [linux-x64, darwin-arm64, win32-x64]
+
+extensions:
+  com.github.copilot:
+    hooks: ./com.github.copilot/hooks/hooks.json
+    agents: [./com.github.copilot/agents/release-reviewer.agent.md]
+  com.anthropic.claude:
+    manifest: ./.claude-plugin/plugin.json

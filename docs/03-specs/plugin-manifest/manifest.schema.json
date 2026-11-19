@@ -1,0 +1,620 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agenthub.io/schemas/plugin/v1alpha1/manifest.schema.json",
+  "title": "Agent Plugin Manifest",
+  "description": "插件清单校验器。作者面可用 YAML 书写；解析为 JSON 后按本 schema 校验。设计目标：一键发现 + 自动拉起 + Agent 调度 + 安全治理。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["apiVersion", "kind", "metadata"],
+  "properties": {
+    "$schema": { "type": "string", "format": "uri-reference" },
+    "apiVersion": {
+      "type": "string",
+      "enum": ["plugin.agenthub.io/v1alpha1"],
+      "description": "清单语义版本。客户端据此决定解析与降级策略。"
+    },
+    "kind": { "type": "string", "enum": ["Plugin"] },
+
+    "metadata": { "$ref": "#/$defs/metadata" },
+    "discovery": { "$ref": "#/$defs/discovery" },
+    "components": { "$ref": "#/$defs/components" },
+    "runtime": { "$ref": "#/$defs/runtime" },
+    "permissions": { "$ref": "#/$defs/permissions" },
+    "trust": { "$ref": "#/$defs/trust" },
+    "routing": { "$ref": "#/$defs/routing" },
+    "compatibility": { "$ref": "#/$defs/compatibility" },
+    "extensions": {
+      "type": "object",
+      "description": "客户端私有扩展。key 必须是反向域名命名空间。未识别的命名空间必须被忽略（不得报错、不得静默丢弃——需在加载报告中列出）。",
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9]*(\\.[a-z0-9][a-z0-9-]*)+$"
+      },
+      "additionalProperties": true
+    }
+  },
+
+  "$defs": {
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"
+    },
+    "reverseDomainId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(\\.[a-z0-9][a-z0-9-]*)+$",
+      "maxLength": 200
+    },
+    "relPath": {
+      "type": "string",
+      "description": "必须为包内相对路径，解析后（含符号链接）不得逃出 PLUGIN_ROOT。",
+      "pattern": "^\\./"
+    },
+    "uri": { "type": "string", "format": "uri" },
+    "i18nString": {
+      "oneOf": [
+        { "type": "string", "maxLength": 4000 },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "pattern": "^[a-z]{2}(-[A-Z]{2})?$" },
+          "additionalProperties": { "type": "string", "maxLength": 4000 }
+        }
+      ]
+    },
+
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "version"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/reverseDomainId",
+          "description": "全局唯一且不可变。建议 <发布者反向域名>.<插件名>。"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*[a-z0-9]$",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "displayName": { "$ref": "#/$defs/i18nString" },
+        "version": { "$ref": "#/$defs/semver" },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "description": "同时用于发现与语义路由。应写清「做什么 + 何时用 + 何时不用」。"
+        },
+        "publisher": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "domain"],
+          "properties": {
+            "name": { "type": "string", "maxLength": 200 },
+            "domain": {
+              "type": "string",
+              "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$",
+              "description": "信任锚。用于 well-known 校验与命名空间归属。"
+            },
+            "did": { "type": "string", "pattern": "^did:[a-z0-9]+:.+$" },
+            "contact": { "type": "string" }
+          }
+        },
+        "license": { "type": "string", "description": "SPDX 标识符" },
+        "homepage": { "$ref": "#/$defs/uri" },
+        "repository": { "$ref": "#/$defs/uri" },
+        "keywords": {
+          "type": "array",
+          "maxItems": 32,
+          "items": { "type": "string", "maxLength": 40 }
+        },
+        "icon": { "$ref": "#/$defs/relPath" }
+      }
+    },
+
+    "discovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "声明本插件在哪些位置可被发现。留空表示仅支持本地/手动安装。",
+      "properties": {
+        "wellKnown": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path"],
+            "properties": {
+              "path": { "type": "string", "pattern": "^/\\.well-known/" },
+              "entryId": { "type": "string" },
+              "mediaType": { "type": "string" }
+            }
+          }
+        },
+        "registries": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["mcp-registry", "agntcy-dir", "ai-catalog", "marketplace", "oci"]
+              },
+              "name": { "type": "string", "maxLength": 200 },
+              "cid": { "type": "string" },
+              "url": { "$ref": "#/$defs/uri" }
+            },
+            "anyOf": [
+              { "required": ["name"] },
+              { "required": ["cid"] },
+              { "required": ["url"] }
+            ],
+            "description": "按 registry 类型提供定位符：mcp-registry 用 name（反向 DNS），agntcy-dir 用 cid，其余用 name 或 url。"
+          }
+        },
+        "mediaTypes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "application/ai-plugin+json",
+              "application/mcp-server+json",
+              "application/a2a-agent-card+json",
+              "application/ai-card+json"
+            ]
+          },
+          "description": "供 AI Catalog 条目声明类型，与 ARD 的 mediaType 对齐。"
+        }
+      }
+    },
+
+    "components": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "只放指针与选择器；SKILL.md / mcp.json / agent-card.json / openapi.yaml 的原生格式保持权威。",
+      "properties": {
+        "skills": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "format", "path"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+              "format": { "type": "string", "enum": ["agent-skills/1.0"] },
+              "path": { "$ref": "#/$defs/relPath" },
+              "enabled": { "type": "boolean", "default": true }
+            }
+          }
+        },
+        "mcpServers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "format"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+              "format": { "type": "string", "enum": ["mcp/2026-07-28", "mcp/2025-06-18"] },
+              "config": {
+                "$ref": "#/$defs/relPath",
+                "description": "指向 mcp.json。禁止在清单内内联 MCP 配置（与 Agent Plugins 1.0 一致）。"
+              }
+            },
+            "oneOf": [{ "required": ["config"] }]
+          }
+        },
+        "openapi": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "document", "operations"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+              "document": { "$ref": "#/$defs/relPath" },
+              "baseUrl": { "$ref": "#/$defs/uri" },
+              "operations": {
+                "type": "array",
+                "minItems": 1,
+                "description": "白名单。禁止全量暴露——上下文成本与误路由的主因。",
+                "items": { "type": "string" }
+              },
+              "exposure": {
+                "type": "string",
+                "enum": ["meta-tools", "each-operation"],
+                "default": "meta-tools"
+              }
+            }
+          }
+        },
+        "agents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "format"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+              "format": { "type": "string", "enum": ["a2a/1.0"] },
+              "card": { "$ref": "#/$defs/relPath" },
+              "cardUrl": { "$ref": "#/$defs/uri" },
+              "url": { "$ref": "#/$defs/uri" },
+              "binding": { "type": "string", "enum": ["JSONRPC", "GRPC", "HTTP+JSON"] }
+            },
+            "anyOf": [{ "required": ["card"] }, { "required": ["cardUrl"] }]
+          }
+        },
+        "workflows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "format", "path"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+              "format": { "type": "string", "enum": ["arazzo/1.0", "agents-json/0.1"] },
+              "path": { "$ref": "#/$defs/relPath" }
+            }
+          }
+        },
+        "apps": {
+          "type": "array",
+          "description": "MCP Apps 富交互界面（SEP-1865）。无宿主支持时必须可降级为文本/结构化输出。",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "extension", "resourceUri", "fallback"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+              "format": { "type": "string", "enum": ["mcp-apps/2026-01-26"] },
+              "extension": { "type": "string", "enum": ["io.modelcontextprotocol/ui"] },
+              "resourceUri": { "type": "string", "pattern": "^ui://" },
+              "fallback": { "type": "string", "enum": ["text", "structured", "none"] }
+            }
+          }
+        }
+      }
+    },
+
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entrypoints"],
+      "properties": {
+        "activation": {
+          "type": "string",
+          "enum": ["eager", "lazy", "on-demand-by-agent", "manual"],
+          "default": "lazy"
+        },
+        "entrypoints": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "transport"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+              "transport": {
+                "type": "string",
+                "enum": ["stdio", "streamable-http", "sse", "grpc", "jsonrpc-http", "http"]
+              },
+              "command": { "type": "string" },
+              "args": { "type": "array", "items": { "type": "string" } },
+              "cwd": { "type": "string" },
+              "env": {
+                "type": "object",
+                "description": "只允许非敏感配置与 ${...} 引用。密钥必须走 permissions.secrets.read。",
+                "additionalProperties": { "type": "string" }
+              },
+              "url": { "$ref": "#/$defs/uri" },
+              "protocolVersions": { "type": "array", "items": { "type": "string" } },
+              "platforms": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64"]
+                }
+              }
+            },
+            "allOf": [
+              {
+                "if": { "properties": { "transport": { "enum": ["stdio"] } }, "required": ["transport"] },
+                "then": { "required": ["command"] }
+              },
+              {
+                "if": {
+                  "properties": { "transport": { "enum": ["streamable-http", "sse", "grpc", "jsonrpc-http", "http"] } },
+                  "required": ["transport"]
+                },
+                "then": { "required": ["url"] }
+              }
+            ]
+          }
+        },
+        "selection": {
+          "type": "string",
+          "enum": ["prefer-local", "prefer-hosted", "lowest-latency"],
+          "default": "prefer-local"
+        },
+        "health": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["probe"],
+          "properties": {
+            "probe": {
+              "type": "string",
+              "enum": ["mcp-server-discover", "http", "tcp", "exec", "a2a-get-card"]
+            },
+            "path": { "type": "string" },
+            "intervalSeconds": { "type": "integer", "minimum": 5, "default": 30 },
+            "timeoutSeconds": { "type": "integer", "minimum": 1, "default": 5 },
+            "failureThreshold": { "type": "integer", "minimum": 1, "default": 3 }
+          }
+        },
+        "lifecycle": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "startTimeoutSeconds": { "type": "integer", "minimum": 1, "default": 20 },
+            "idleTimeoutSeconds": { "type": "integer", "minimum": 0, "default": 900 },
+            "restartPolicy": { "type": "string", "enum": ["never", "on-failure", "always"], "default": "on-failure" },
+            "maxRestarts": { "type": "integer", "minimum": 0, "default": 3 },
+            "shutdownGraceSeconds": { "type": "integer", "minimum": 0, "default": 10 }
+          }
+        },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cpu": { "type": "string" },
+            "memory": { "type": "string" },
+            "gpu": { "type": "string" }
+          }
+        },
+        "sandbox": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "profile": { "type": "string", "enum": ["none", "restricted", "strict"], "default": "restricted" },
+            "filesystem": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "read": { "type": "array", "items": { "type": "string" } },
+                "write": { "type": "array", "items": { "type": "string" } }
+              }
+            },
+            "network": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "egress": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "permissions": {
+      "type": "array",
+      "description": "默认拒绝：未列出的权限一律不可用。未授予的权限只让对应能力 unavailable，不导致整包失败。",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": [
+              "fs.read.workspace",
+              "fs.read.home",
+              "net.egress",
+              "exec",
+              "secrets.read",
+              "artifact.write",
+              "clipboard.write",
+              "device.access"
+            ]
+          },
+          "scope": { "type": "string" },
+          "hosts": { "type": "array", "items": { "type": "string" } },
+          "methods": { "type": "array", "items": { "type": "string" } },
+          "commands": { "type": "array", "items": { "type": "string" } },
+          "refs": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "密钥引用路径（如 acme/deploy-token）。禁止明文。"
+          },
+          "ttlSeconds": { "type": "integer", "minimum": 0 },
+          "reason": { "type": "string", "maxLength": 500 }
+        }
+      }
+    },
+
+    "trust": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "signed / verified / trusted 为三态，禁止合并。verification 结果由客户端在加载时计算并缓存。",
+      "properties": {
+        "signing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["algorithm", "keyId", "signatureRef"],
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "enum": ["ES256", "ES384", "EdDSA", "RS256", "PS256"],
+              "description": "仅允许非对称算法。HS* 对公开清单无意义（验签密钥即可伪造密钥）。"
+            },
+            "keyId": { "type": "string" },
+            "signatureRef": { "$ref": "#/$defs/relPath" },
+            "signedFields": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "参与签名的顶层字段，规范化（JCS）后计算。"
+            }
+          }
+        },
+        "integrity": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["algorithm", "digest"],
+          "properties": {
+            "algorithm": { "type": "string", "enum": ["sha256", "sha512"] },
+            "digest": { "type": "string", "pattern": "^[0-9a-f]{64,128}$" }
+          }
+        },
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "uri"],
+          "properties": {
+            "type": { "type": "string", "enum": ["slsa/v1", "in-toto", "sigstore-bundle"] },
+            "uri": { "$ref": "#/$defs/uri" }
+          }
+        },
+        "attestations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "uri"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["soc2-type2", "iso27001", "hipaa", "gdpr-dpa", "custom"]
+              },
+              "uri": { "$ref": "#/$defs/uri" }
+            }
+          }
+        },
+        "publisherVerification": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["method"],
+          "properties": {
+            "method": {
+              "type": "string",
+              "enum": ["well-known-jwks", "did", "oidc", "spiffe", "manual"]
+            },
+            "uri": { "$ref": "#/$defs/uri" }
+          }
+        }
+      }
+    },
+
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "给调度器的元数据。examples 同时用于语义匹配与 AI Catalog 的 representativeQueries。",
+      "properties": {
+        "intents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "examples", "capabilityRefs", "mode"],
+            "properties": {
+              "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+              "examples": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 20,
+                "items": { "type": "string", "maxLength": 200 }
+              },
+              "capabilityRefs": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "pattern": "^(skill|tool|agent|workflow|app):.+$"
+                },
+                "description": "必须能在 components 中解析到，否则加载时报悬空引用。"
+              },
+              "mode": { "type": "string", "enum": ["tool", "skill", "agent", "workflow"] },
+              "costHint": { "type": "string", "enum": ["low", "medium", "high"] },
+              "latencyHint": { "type": "string", "enum": ["instant", "seconds", "minutes", "hours"] },
+              "requiresApproval": { "type": "boolean", "default": false },
+              "destructive": { "type": "boolean", "default": false }
+            },
+            "allOf": [
+              {
+                "if": { "properties": { "destructive": { "const": true } }, "required": ["destructive"] },
+                "then": { "properties": { "requiresApproval": { "const": true } }, "required": ["requiresApproval"] }
+              }
+            ]
+          }
+        },
+        "triggers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "capabilityRefs"],
+            "properties": {
+              "type": { "type": "string", "enum": ["event", "schedule", "webhook", "file-change"] },
+              "source": { "type": "string" },
+              "filter": { "type": "string" },
+              "cron": { "type": "string" },
+              "capabilityRefs": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "concurrency": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxParallel": { "type": "integer", "minimum": 1, "default": 1 },
+            "exclusiveWith": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/reverseDomainId" },
+              "description": "互斥插件：同一时段不得同时激活。"
+            }
+          }
+        },
+        "context": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "tokenBudgetHint": { "type": "integer", "minimum": 0 },
+            "toolNamePrefix": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]{1,19}$",
+              "description": "工具名前缀，防跨插件命名冲突；最终工具名须 ≤60 字符。"
+            }
+          }
+        }
+      }
+    },
+
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "minManagerVersion": { "type": "string" },
+        "protocols": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mcp": { "type": "array", "items": { "type": "string" } },
+            "a2a": { "type": "array", "items": { "type": "string" } },
+            "agentSkills": { "type": "string" },
+            "agentPlugins": { "type": "string" }
+          }
+        },
+        "platforms": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64"]
+          }
+        }
+      }
+    }
+  }
+}

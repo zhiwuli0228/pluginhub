@@ -1,0 +1,12 @@
+{
+  "name": "plugin-manifest",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "validate": "node validate.mjs example.plugin.yaml"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "js-yaml": "^4.1.0"
+  }
+}
