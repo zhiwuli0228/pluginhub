@@ -20,5 +20,6 @@ export type {
 } from './types.js';
 
 // Built-in adapters
+export { A2AAdapter } from './a2a-adapter.js';
 export { McpToolAdapter } from './mcp-adapter.js';
 export { SkillsAdapter } from './skills-adapter.js';
