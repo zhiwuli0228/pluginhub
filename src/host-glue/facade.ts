@@ -13,6 +13,8 @@ import type { DiscoveredEntry } from '../core/discovery/types.js';
 import { Orchestrator } from '../core/orchestrator/index.js';
 import type { PluginInstance, PluginStartOptions } from '../core/orchestrator/index.js';
 import type { CanonicalCapability } from '../core/capability/types.js';
+import { ObserverBus } from '../core/observer/index.js';
+import type { EventFilter, EventType, ObserverEvent } from '../core/observer/index.js';
 
 // ---------------------------------------------------------------------------
 // Optional router import
@@ -96,6 +98,9 @@ export class PluginHubFacade {
   /** Process orchestrator instance. */
   readonly orchestrator: Orchestrator;
 
+  /** Observer bus for runtime event collection and streaming. */
+  readonly observer: ObserverBus;
+
   /**
    * Invocation router instance (may be `null` if the router module is unavailable).
    * Typed as `unknown` until the router module exports a concrete class.
@@ -125,6 +130,8 @@ export class PluginHubFacade {
     this.orchestrator = new Orchestrator({
       gracefulShutdownMs: this.config.gracefulShutdownMs,
     });
+
+    this.observer = new ObserverBus();
 
     // Instantiate the router if available.
     if (InvocationRouterClass !== null) {
@@ -170,6 +177,9 @@ export class PluginHubFacade {
 
     // Stop all managed plugin processes.
     await this.orchestrator.dispose();
+
+    // Shutdown the observer bus (closes SSE streams, removes listeners).
+    await this.observer.shutdown();
 
     // Clear discovery index.
     this.discovery.clear();
@@ -300,6 +310,35 @@ export class PluginHubFacade {
   ): Promise<unknown> {
     // TODO: Wire up invocation router.
     throw new Error('Capability invocation is not yet implemented.');
+  }
+
+  // -------------------------------------------------------------------------
+  // Observer proxies
+  // -------------------------------------------------------------------------
+
+  /**
+   * Query buffered runtime events with an optional filter.
+   *
+   * Proxies to {@link ObserverBus.query}.
+   *
+   * @param filter - Optional filter criteria (types, since, limit, etc.).
+   * @returns Matching events sorted oldest-first.
+   */
+  getEvents(filter?: EventFilter): ObserverEvent[] {
+    return this.observer.query(filter);
+  }
+
+  /**
+   * Emit a structured runtime event into the observer bus.
+   *
+   * Proxies to {@link ObserverBus.emitEvent}.
+   *
+   * @param type - The event type tag.
+   * @param payload - Type-specific event data.
+   * @returns The fully-formed observer event.
+   */
+  emitEvent(type: EventType, payload: Record<string, unknown>): ObserverEvent {
+    return this.observer.emitEvent(type, payload);
   }
 
   // -------------------------------------------------------------------------

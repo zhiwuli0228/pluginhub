@@ -303,5 +303,87 @@ export function createDshTools(hub: PluginHubFacade): DshToolDefinition[] {
         return result;
       },
     },
+
+    // -----------------------------------------------------------------------
+    // pluginhub_events
+    // -----------------------------------------------------------------------
+    {
+      name: 'pluginhub_events',
+      description:
+        'Query runtime events collected by the PluginHub observer bus. ' +
+        'Supports filtering by event types and limiting the number of results.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          types: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Filter events to only these types.',
+          },
+          limit: {
+            type: 'number',
+            description: 'Maximum number of events to return.',
+          },
+        },
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const types = Array.isArray(args['types'])
+          ? (args['types'] as string[])
+          : undefined;
+        const limit = typeof args['limit'] === 'number' ? args['limit'] : undefined;
+
+        const events = hub.getEvents({
+          ...(types !== undefined && { types: types as import('../core/observer/types.js').EventType[] }),
+          ...(limit !== undefined && { limit }),
+        });
+
+        return events.map((e) => ({
+          id: e.id,
+          timestamp: e.timestamp,
+          type: e.type,
+          payload: e.payload,
+        }));
+      },
+    },
+
+    // -----------------------------------------------------------------------
+    // pluginhub_serve_ui
+    // -----------------------------------------------------------------------
+    {
+      name: 'pluginhub_serve_ui',
+      description:
+        'Start the PluginHub Control UI HTTP server. ' +
+        'Serves a web dashboard for managing plugins, viewing capabilities, and streaming events.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          port: {
+            type: 'number',
+            description: 'Port to listen on (default: 7890).',
+          },
+        },
+        additionalProperties: false,
+      },
+      handler: async (args) => {
+        const port = typeof args['port'] === 'number' ? args['port'] : undefined;
+
+        // Dynamically import UIServer to avoid hard dependency at module level.
+        const { UIServer: UIServerClass } = await import('../client-ui/server.js');
+        const uiServer = new UIServerClass({
+          port,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          facade: hub as any,
+          observerBus: hub.observer,
+        });
+
+        const result = await uiServer.start();
+        return {
+          url: result.url,
+          port: result.port,
+          message: `PluginHub Control UI is running at ${result.url}`,
+        };
+      },
+    },
   ];
 }

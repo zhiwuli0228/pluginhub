@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>PluginHub Control UI</title>
+<style>
+/* ── Reset & Base ─────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg-primary:   #1a1a2e;
+  --bg-secondary: #16213e;
+  --bg-card:      #0f3460;
+  --bg-input:     #1a1a40;
+  --text-primary: #e0e0e0;
+  --text-muted:   #8888aa;
+  --accent:       #e94560;
+  --border:       #2a2a4a;
+
+  /* Badge palette */
+  --badge-tool:     #3b82f6;
+  --badge-skill:    #22c55e;
+  --badge-agent:    #a855f7;
+  --badge-workflow: #f97316;
+
+  /* Health dots */
+  --health-green:  #22c55e;
+  --health-yellow: #eab308;
+  --health-red:    #ef4444;
+
+  --font-mono: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', Consolas, monospace;
+  --font-sans: system-ui, -apple-system, sans-serif;
+  --radius: 6px;
+}
+
+html, body { height: 100%; }
+body {
+  font-family: var(--font-sans);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Top Nav ──────────────────────────────────────────── */
+nav.top-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 16px;
+  height: 48px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+nav.top-bar .logo {
+  font-weight: 700;
+  font-size: 15px;
+  margin-right: 24px;
+  color: var(--accent);
+  letter-spacing: .5px;
+  user-select: none;
+}
+
+nav.top-bar button.tab {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+nav.top-bar button.tab:hover { background: rgba(255,255,255,.06); color: var(--text-primary); }
+nav.top-bar button.tab.active { background: var(--accent); color: #fff; }
+
+.status-indicator {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.status-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--health-red);
+  transition: background .3s;
+}
+.status-dot.connected    { background: var(--health-green); }
+.status-dot.reconnecting { background: var(--health-yellow); animation: pulse 1s infinite; }
+
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+/* ── Main Content ─────────────────────────────────────── */
+main { flex: 1; overflow: hidden; position: relative; }
+
+.view { display: none; height: 100%; overflow-y: auto; padding: 20px; }
+.view.active { display: block; }
+
+/* ── Topology View ────────────────────────────────────── */
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.cap-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  cursor: pointer;
+  transition: border-color .15s, transform .1s;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cap-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+
+.cap-card .card-header { display: flex; align-items: center; gap: 8px; }
+.cap-card .cap-name { font-weight: 600; font-size: 14px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.health-dot-sm {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  line-height: 1.4;
+}
+.badge-tool     { background: var(--badge-tool);     color: #fff; }
+.badge-skill    { background: var(--badge-skill);    color: #fff; }
+.badge-agent    { background: var(--badge-agent);    color: #fff; }
+.badge-workflow { background: var(--badge-workflow); color: #fff; }
+
+.trust-badge {
+  font-size: 11px;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+/* ── Details View ─────────────────────────────────────── */
+.details-empty {
+  display: flex; align-items: center; justify-content: center;
+  height: 100%; color: var(--text-muted); font-size: 14px;
+}
+
+.details-panel { max-width: 800px; margin: 0 auto; }
+
+.details-panel h2 { font-size: 20px; margin-bottom: 4px; }
+.details-meta { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+
+.details-section { margin-bottom: 20px; }
+.details-section h3 {
+  font-size: 13px; text-transform: uppercase; letter-spacing: .6px;
+  color: var(--text-muted); margin-bottom: 8px; border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+
+.semantics-list { display: flex; gap: 6px; flex-wrap: wrap; }
+.sem-tag {
+  font-size: 11px; padding: 2px 8px; border-radius: 4px;
+  background: rgba(255,255,255,.07); color: var(--text-primary);
+}
+
+pre.json-block {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.schema-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.schema-table th, .schema-table td {
+  text-align: left; padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.schema-table th { color: var(--text-muted); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+.schema-table td.field-name { font-family: var(--font-mono); color: var(--accent); }
+.schema-table td.field-type { font-family: var(--font-mono); color: var(--badge-tool); }
+
+.btn-back {
+  background: transparent; border: 1px solid var(--border); color: var(--text-muted);
+  padding: 5px 12px; border-radius: var(--radius); cursor: pointer; font-size: 12px;
+  margin-bottom: 16px; transition: border-color .15s, color .15s;
+}
+.btn-back:hover { border-color: var(--accent); color: var(--text-primary); }
+
+/* ── Realtime View ────────────────────────────────────── */
+.realtime-toolbar {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+}
+.btn-pause {
+  background: var(--bg-card); border: 1px solid var(--border); color: var(--text-primary);
+  padding: 5px 14px; border-radius: var(--radius); cursor: pointer; font-size: 12px;
+  transition: background .15s;
+}
+.btn-pause:hover { background: var(--accent); border-color: var(--accent); }
+.event-count-label { font-size: 12px; color: var(--text-muted); margin-left: auto; }
+
+.event-stream {
+  display: flex; flex-direction: column; gap: 4px;
+  font-family: var(--font-mono); font-size: 12px;
+}
+
+.event-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 5px 10px; border-radius: 4px;
+  background: rgba(255,255,255,.02);
+  border-left: 3px solid transparent;
+}
+.event-row:nth-child(even) { background: rgba(255,255,255,.04); }
+.event-row.type-tool     { border-left-color: var(--badge-tool); }
+.event-row.type-skill    { border-left-color: var(--badge-skill); }
+.event-row.type-agent    { border-left-color: var(--badge-agent); }
+.event-row.type-workflow { border-left-color: var(--badge-workflow); }
+.event-row.type-system   { border-left-color: var(--accent); }
+
+.ev-time  { color: var(--text-muted); white-space: nowrap; min-width: 80px; }
+.ev-type  { min-width: 70px; }
+.ev-payload { color: var(--text-primary); word-break: break-all; flex: 1; }
+
+/* ── Bottom Status Bar ────────────────────────────────── */
+footer.status-bar {
+  height: 28px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  display: flex; align-items: center;
+  padding: 0 16px; gap: 16px;
+  font-size: 11px; color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* ── Responsive ───────────────────────────────────────── */
+@media (max-width: 600px) {
+  nav.top-bar { padding: 0 8px; gap: 2px; }
+  nav.top-bar .logo { font-size: 13px; margin-right: 12px; }
+  nav.top-bar button.tab { padding: 5px 8px; font-size: 12px; }
+  .view { padding: 12px; }
+  .card-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- ═══ Top Navigation ═══ -->
+<nav class="top-bar">
+  <span class="logo">⬡ PluginHub</span>
+  <button class="tab active" data-view="topology">Topology</button>
+  <button class="tab" data-view="details">Details</button>
+  <button class="tab" data-view="realtime">Realtime</button>
+  <div class="status-indicator">
+    <div class="status-dot" id="connDot"></div>
+    <span id="connLabel">Disconnected</span>
+  </div>
+</nav>
+
+<!-- ═══ Main Views ═══ -->
+<main>
+  <!-- Topology -->
+  <section id="view-topology" class="view active">
+    <div class="card-grid" id="cardGrid">
+      <div style="color:var(--text-muted);padding:40px;text-align:center;">Loading capabilities…</div>
+    </div>
+  </section>
+
+  <!-- Details -->
+  <section id="view-details" class="view">
+    <div id="detailsContent">
+      <div class="details-empty">Select a capability from Topology to view details.</div>
+    </div>
+  </section>
+
+  <!-- Realtime -->
+  <section id="view-realtime" class="view">
+    <div class="realtime-toolbar">
+      <button class="btn-pause" id="btnPause">⏸ Pause</button>
+      <span class="event-count-label" id="evCountLabel">0 events</span>
+    </div>
+    <div class="event-stream" id="eventStream"></div>
+  </section>
+</main>
+
+<!-- ═══ Bottom Status Bar ═══ -->
+<footer class="status-bar">
+  <span id="footerConn">● Disconnected</span>
+  <span id="footerEvents">Events: 0</span>
+</footer>
+
+<script>
+/* ────────────────────────────────────────────────────────
+   PluginHub Control UI – Client Logic
+   ──────────────────────────────────────────────────────── */
+(function () {
+  'use strict';
+
+  // ── State ──────────────────────────────────────────────
+  const state = {
+    capabilities: [],
+    selectedId: null,
+    events: [],
+    paused: false,
+    connected: false,
+    eventSource: null,
+    pendingEvents: [],
+    flushTimer: null,
+  };
+
+  // ── DOM refs ───────────────────────────────────────────
+  const $ = (sel) => document.querySelector(sel);
+  const connDot     = $('#connDot');
+  const connLabel   = $('#connLabel');
+  const footerConn  = $('#footerConn');
+  const footerEvents = $('#footerEvents');
+  const cardGrid    = $('#cardGrid');
+  const detailsContent = $('#detailsContent');
+  const eventStream = $('#eventStream');
+  const btnPause    = $('#btnPause');
+  const evCountLabel = $('#evCountLabel');
+
+  // ── Tab switching ──────────────────────────────────────
+  document.querySelectorAll('nav.top-bar button.tab').forEach((btn) => {
+    btn.addEventListener('click', () => switchView(btn.dataset.view));
+  });
+
+  function switchView(name) {
+    document.querySelectorAll('nav.top-bar button.tab').forEach((b) =>
+      b.classList.toggle('active', b.dataset.view === name)
+    );
+    document.querySelectorAll('main .view').forEach((v) =>
+      v.classList.toggle('active', v.id === 'view-' + name)
+    );
+  }
+
+  // ── Connection status helpers ──────────────────────────
+  function setConnected(ok) {
+    state.connected = ok;
+    connDot.className = 'status-dot' + (ok ? ' connected' : '');
+    connLabel.textContent = ok ? 'Connected' : 'Disconnected';
+    footerConn.textContent = ok ? '● Connected' : '● Disconnected';
+    footerConn.style.color = ok ? 'var(--health-green)' : 'var(--health-red)';
+  }
+
+  function setReconnecting() {
+    connDot.className = 'status-dot reconnecting';
+    connLabel.textContent = 'Reconnecting…';
+    footerConn.textContent = '● Reconnecting…';
+    footerConn.style.color = 'var(--health-yellow)';
+  }
+
+  // ── API helpers ────────────────────────────────────────
+  async function apiGet(path) {
+    try {
+      const res = await fetch(path);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.json();
+    } catch (err) {
+      console.error('[API]', path, err);
+      return null;
+    }
+  }
+
+  // ── Load capabilities ─────────────────────────────────
+  async function loadCapabilities() {
+    const data = await apiGet('/api/capabilities');
+    if (Array.isArray(data)) {
+      state.capabilities = data;
+      renderCards();
+    }
+  }
+
+  // ── Render topology cards ─────────────────────────────
+  function healthColor(h) {
+    if (h === 'healthy')  return 'var(--health-green)';
+    if (h === 'degraded') return 'var(--health-yellow)';
+    return 'var(--health-red)';
+  }
+
+  function kindBadgeClass(kind) {
+    const k = (kind || '').toLowerCase();
+    if (k === 'skill')    return 'badge-skill';
+    if (k === 'agent')    return 'badge-agent';
+    if (k === 'workflow') return 'badge-workflow';
+    return 'badge-tool';
+  }
+
+  function renderCards() {
+    if (!state.capabilities.length) {
+      cardGrid.innerHTML = '<div style="color:var(--text-muted);padding:40px;text-align:center;">No capabilities registered.</div>';
+      return;
+    }
+    cardGrid.innerHTML = state.capabilities.map((cap) => {
+      const health = cap.health || 'unknown';
+      const kind   = cap.kind  || 'tool';
+      const trust  = cap.trust || 'untrusted';
+      return `
+        <div class="cap-card" data-id="${esc(cap.id)}">
+          <div class="card-header">
+            <span class="cap-name" title="${esc(cap.name || cap.id)}">${esc(cap.name || cap.id)}</span>
+            <span class="health-dot-sm" style="background:${healthColor(health)}" title="${esc(health)}"></span>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <span class="badge ${kindBadgeClass(kind)}">${esc(kind)}</span>
+            <span class="trust-badge">${esc(trust)}</span>
+          </div>
+        </div>`;
+    }).join('');
+
+    cardGrid.querySelectorAll('.cap-card').forEach((el) => {
+      el.addEventListener('click', () => selectCapability(el.dataset.id));
+    });
+  }
+
+  // ── Select capability → Details ────────────────────────
+  async function selectCapability(id) {
+    state.selectedId = id;
+    switchView('details');
+    detailsContent.innerHTML = '<div class="details-empty">Loading…</div>';
+
+    const cap = await apiGet('/api/capabilities/' + encodeURIComponent(id));
+    if (!cap) {
+      detailsContent.innerHTML = '<div class="details-empty">Capability not found.</div>';
+      return;
+    }
+    renderDetails(cap);
+  }
+
+  function renderDetails(cap) {
+    const kind  = cap.kind || 'tool';
+    const health = cap.health || 'unknown';
+    const trust  = cap.trust || 'untrusted';
+    const semantics = cap.semantics || {};
+    const semKeys = Object.entries(semantics)
+      .filter(([, v]) => v === true)
+      .map(([k]) => k);
+
+    const inputSchema  = cap.inputSchema  || cap.schema?.input  || {};
+    const outputSchema = cap.outputSchema || cap.schema?.output || {};
+
+    detailsContent.innerHTML = `
+      <button class="btn-back" id="btnBack">← Back to Topology</button>
+      <div class="details-panel">
+        <h2>${esc(cap.name || cap.id)}</h2>
+        <div class="details-meta">
+          <span class="badge ${kindBadgeClass(kind)}">${esc(kind)}</span>
+          <span class="trust-badge">${esc(trust)}</span>
+          <span class="health-dot-sm" style="background:${healthColor(health)};display:inline-block;vertical-align:middle;" title="${esc(health)}"></span>
+          <span style="font-size:12px;color:var(--text-muted);">${esc(health)}</span>
+        </div>
+
+        ${semKeys.length ? `
+        <div class="details-section">
+          <h3>Semantics</h3>
+          <div class="semantics-list">
+            ${semKeys.map((k) => `<span class="sem-tag">${esc(k)}</span>`).join('')}
+          </div>
+        </div>` : ''}
+
+        <div class="details-section">
+          <h3>Input Schema</h3>
+          ${renderSchemaTable(inputSchema)}
+        </div>
+
+        <div class="details-section">
+          <h3>Output Schema</h3>
+          ${renderSchemaTable(outputSchema)}
+        </div>
+
+        <div class="details-section">
+          <h3>Manifest (Raw JSON)</h3>
+          <pre class="json-block">${esc(JSON.stringify(cap.manifest || cap, null, 2))}</pre>
+        </div>
+      </div>`;
+
+    $('#btnBack').addEventListener('click', () => switchView('topology'));
+  }
+
+  function renderSchemaTable(schema) {
+    if (!schema || typeof schema !== 'object') {
+      return '<div style="color:var(--text-muted);font-size:12px;">No schema defined.</div>';
+    }
+    const props = schema.properties || {};
+    const required = new Set(schema.required || []);
+    const rows = Object.entries(props).map(([name, def]) => {
+      const type = def.type || 'any';
+      const desc = def.description || '';
+      const req  = required.has(name) ? '*' : '';
+      return `<tr>
+        <td class="field-name">${esc(name)}${req}</td>
+        <td class="field-type">${esc(type)}</td>
+        <td>${esc(desc)}</td>
+      </tr>`;
+    }).join('');
+    if (!rows) return '<div style="color:var(--text-muted);font-size:12px;">Empty schema.</div>';
+    return `<table class="schema-table">
+      <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+  }
+
+  // ── SSE Event Stream ───────────────────────────────────
+  function connectSSE() {
+    if (state.eventSource) {
+      state.eventSource.close();
+      state.eventSource = null;
+    }
+
+    const es = new EventSource('/api/events');
+    state.eventSource = es;
+
+    es.onopen = () => setConnected(true);
+
+    es.onerror = () => {
+      setConnected(false);
+      if (es.readyState === EventSource.CONNECTING) setReconnecting();
+    };
+
+    es.addEventListener('event', (e) => {
+      try {
+        const payload = JSON.parse(e.data);
+        enqueueEvent(payload);
+      } catch (_) { /* ignore malformed */ }
+    });
+
+    // Fallback: unnamed messages
+    es.onmessage = (e) => {
+      try {
+        const payload = JSON.parse(e.data);
+        enqueueEvent(payload);
+      } catch (_) { /* ignore */ }
+    };
+  }
+
+  function enqueueEvent(ev) {
+    state.events.push(ev);
+    updateEventCounters();
+    if (!state.paused) {
+      state.pendingEvents.push(ev);
+      scheduleFlush();
+    }
+  }
+
+  function scheduleFlush() {
+    if (state.flushTimer) return;
+    state.flushTimer = setTimeout(flushEvents, 100);
+  }
+
+  function flushEvents() {
+    state.flushTimer = null;
+    if (!state.pendingEvents.length) return;
+    const batch = state.pendingEvents.splice(0);
+    const frag = document.createDocumentFragment();
+    for (const ev of batch) {
+      frag.appendChild(createEventRow(ev));
+    }
+    eventStream.appendChild(frag);
+    // Auto-scroll
+    const container = $('#view-realtime');
+    container.scrollTop = container.scrollHeight;
+  }
+
+  function createEventRow(ev) {
+    const row = document.createElement('div');
+    const type = (ev.type || 'system').toLowerCase();
+    row.className = 'event-row type-' + type;
+
+    const ts = ev.timestamp ? new Date(ev.timestamp) : new Date();
+    const timeStr = ts.toLocaleTimeString('en-GB', { hour12: false });
+
+    const summary = typeof ev.payload === 'string'
+      ? ev.payload
+      : JSON.stringify(ev.payload ?? ev.data ?? ev);
+
+    row.innerHTML = `
+      <span class="ev-time">${esc(timeStr)}</span>
+      <span class="ev-type"><span class="badge badge-${type === 'system' ? '' : kindBadgeClass(type).replace('badge-','')}">${esc(type)}</span></span>
+      <span class="ev-payload">${esc(summary)}</span>`;
+    return row;
+  }
+
+  function updateEventCounters() {
+    const n = state.events.length;
+    footerEvents.textContent = 'Events: ' + n;
+    evCountLabel.textContent  = n + ' events';
+  }
+
+  // ── Pause / Resume ─────────────────────────────────────
+  btnPause.addEventListener('click', () => {
+    state.paused = !state.paused;
+    btnPause.textContent = state.paused ? '▶ Resume' : '⏸ Pause';
+    if (!state.paused) {
+      // Flush anything accumulated while paused
+      state.pendingEvents = [];
+      // Re-render all events
+      eventStream.innerHTML = '';
+      const frag = document.createDocumentFragment();
+      for (const ev of state.events) frag.appendChild(createEventRow(ev));
+      eventStream.appendChild(frag);
+      const container = $('#view-realtime');
+      container.scrollTop = container.scrollHeight;
+    }
+  });
+
+  // ── Utilities ──────────────────────────────────────────
+  function esc(s) {
+    if (s == null) return '';
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  // ── Init ───────────────────────────────────────────────
+  loadCapabilities();
+  connectSSE();
+
+  // Poll capabilities every 30s
+  setInterval(loadCapabilities, 30000);
+})();
+</script>
+</body>
+</html>
