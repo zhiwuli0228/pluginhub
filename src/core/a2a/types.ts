@@ -200,3 +200,35 @@ export interface A2AResponse {
   result?: unknown
   error?: { code: number; message: string; data?: unknown }
 }
+
+// ---------------------------------------------------------------------------
+// A2A 1.1 Additions
+// ---------------------------------------------------------------------------
+
+/** Generation counter for optimistic concurrency (1.1). */
+export interface TaskGeneration {
+  /** Monotonically increasing generation number. */
+  generation: number
+}
+
+/** Extended Task with 1.1 fields. */
+export interface TaskV11 extends Task {
+  /** Current generation for optimistic concurrency. */
+  generation?: number
+}
+
+/** Options for sendTask/sendMessage with 1.1 concurrency control. */
+export interface SendTaskOptions {
+  /** Expected current generation (for If-Match semantics). */
+  expectedGeneration?: number
+  /** Whether this is a live (streaming) message. */
+  live?: boolean
+}
+
+/** Result of a send operation that may include generation info. */
+export interface SendTaskResult {
+  /** The task returned by the server. */
+  task: Task
+  /** New generation after the send (if server supports 1.1). */
+  generation?: number
+}

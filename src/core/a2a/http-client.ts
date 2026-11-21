@@ -11,6 +11,9 @@ import type {
   AgentCard,
   Message,
   Task,
+  TaskV11,
+  SendTaskOptions,
+  SendTaskResult,
   A2ARequest,
   A2AResponse,
 } from './types.js'
@@ -198,8 +201,129 @@ export class A2AHttpClient {
   }
 
   // -------------------------------------------------------------------------
+  // A2A 1.1 Methods
+  // -------------------------------------------------------------------------
+
+  /**
+   * Send a task with 1.1 generation-based concurrency control.
+   *
+   * If `options.expectedGeneration` is provided, an `if_generation_match`
+   * field is included in the JSON-RPC params so the server can enforce
+   * optimistic concurrency. The response is parsed for a `generation` field
+   * when the server supports A2A 1.1.
+   *
+   * @param params  - Standard send-task parameters.
+   * @param options - Optional 1.1 concurrency / live flags.
+   * @returns The task and optional new generation.
+   */
+  async sendTaskV11(
+    params: {
+      id?: string
+      message: Message
+      acceptedOutputModes?: string[]
+    },
+    options?: SendTaskOptions,
+  ): Promise<SendTaskResult> {
+    const rpcParams: Record<string, unknown> = {
+      message: params.message,
+    }
+    if (params.id !== undefined) {
+      rpcParams.id = params.id
+    }
+    if (params.acceptedOutputModes !== undefined) {
+      rpcParams.acceptedOutputModes = params.acceptedOutputModes
+    }
+    if (options?.expectedGeneration !== undefined) {
+      rpcParams.if_generation_match = options.expectedGeneration
+    }
+
+    const result = await this.rpcCall<Record<string, unknown>>('tasks/send', rpcParams)
+
+    return this.extractSendTaskResult(result)
+  }
+
+  /**
+   * Send a live (streaming) message to an existing task (1.1 SendLiveMessage).
+   *
+   * Uses the `tasks/sendSubscribe` JSON-RPC method introduced in A2A 1.1.
+   * If the server does not recognise the method (method-not-found error),
+   * the call gracefully falls back to the regular {@link sendMessage} path.
+   *
+   * @param params - Target task ID and message payload.
+   * @returns The task and optional new generation.
+   */
+  async sendLiveMessage(params: {
+    taskId: string
+    message: Message
+  }): Promise<SendTaskResult> {
+    try {
+      const result = await this.rpcCall<Record<string, unknown>>(
+        'tasks/sendSubscribe',
+        {
+          id: params.taskId,
+          message: params.message,
+        },
+      )
+      return this.extractSendTaskResult(result)
+    } catch (err) {
+      // Fall back when the server does not support the 1.1 live method.
+      // JSON-RPC -32601 = Method not found; HTTP 404/405 also qualify.
+      const isMethodNotFound =
+        err instanceof A2ARpcError && err.code === -32601
+      const isHttpNotFound =
+        err instanceof A2AHttpError &&
+        (err.statusCode === 404 || err.statusCode === 405)
+
+      if (isMethodNotFound || isHttpNotFound) {
+        const task = await this.sendMessage(params)
+        return { task }
+      }
+      throw err
+    }
+  }
+
+  /**
+   * Get task with generation info (1.1).
+   *
+   * Identical to {@link getTask} but returns the extended {@link TaskV11}
+   * type that includes the optional `generation` field.
+   *
+   * @param taskId - The task identifier.
+   * @returns Current {@link TaskV11} snapshot including generation if available.
+   */
+  async getTaskV11(taskId: string): Promise<TaskV11> {
+    return this.rpcCall<TaskV11>('tasks/get', { id: taskId })
+  }
+
+  // -------------------------------------------------------------------------
   // Internals
   // -------------------------------------------------------------------------
+
+  /**
+   * Normalise a raw RPC result into a {@link SendTaskResult}.
+   *
+   * Handles both the case where the server wraps the task in an object with
+   * a top-level `generation`, and the case where it returns a plain Task.
+   */
+  private extractSendTaskResult(raw: Record<string, unknown>): SendTaskResult {
+    // If the result has a nested `task` key, unwrap it.
+    if (raw && typeof raw === 'object' && 'task' in raw) {
+      return {
+        task: raw.task as Task,
+        generation:
+          typeof raw.generation === 'number' ? raw.generation : undefined,
+      }
+    }
+
+    // Otherwise treat the whole result as a Task (possibly with generation).
+    const task = raw as unknown as Task
+    const generation =
+      typeof (raw as Record<string, unknown>).generation === 'number'
+        ? ((raw as Record<string, unknown>).generation as number)
+        : undefined
+
+    return { task, generation }
+  }
 
   /**
    * Execute a JSON-RPC call against the agent endpoint.

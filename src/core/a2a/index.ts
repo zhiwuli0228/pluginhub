@@ -18,6 +18,11 @@ export type {
   Artifact,
   A2ARequest,
   A2AResponse,
+  // A2A 1.1 additions
+  TaskGeneration,
+  TaskV11,
+  SendTaskOptions,
+  SendTaskResult,
 } from './types.js'
 
 // Client
