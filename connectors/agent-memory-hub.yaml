@@ -1,0 +1,21 @@
+# Connector: agent-memory-hub
+#
+# Tier 0 contract — this plugin already shipped a standalone panel on its own
+# port, which is why it was the first one that worked end to end.
+
+id: agent-memory-hub
+name: Agent 记忆中心
+icon: "🧠"
+
+upstream: http://127.0.0.1:7777
+
+panelPath: /panel
+
+pathPrefixes:
+  - /api/
+
+health:
+  path: /api/status
+  method: GET
+
+openUrl: http://127.0.0.1:7777/panel

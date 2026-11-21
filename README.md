@@ -86,6 +86,33 @@ pluginhub list --kind tool
 pluginhub discover example.com
 ```
 
+## 运行看板（连接器驱动）
+
+```bash
+npm run demo          # 启动在 http://127.0.0.1:7895
+npm run verify:demo   # Playwright 自动化验证（切 Tab + 校验真实数据）
+```
+
+看板不为每个插件写渲染代码，而是读 `connectors/*.yaml`：
+
+```yaml
+id: token-usage-statistic
+name: Token 用量统计
+icon: "📊"
+upstream: http://127.0.0.1:59618
+panelPath: /token-usage-statistic/panel   # 插件自带的自包含面板
+pathPrefixes:
+  - /token-usage-statistic/               # 面板内部会调用的绝对路径
+injectHeaders:                            # 可选，代理时注入
+  x-env-manager-request: "1"
+openUrl: http://127.0.0.1:59618/
+```
+
+PluginHub 只做四件事：**探面板可达性 → 代理 → 重写面板内的绝对路径 → iframe 嵌入**。
+
+插件侧需要遵守的契约见 [面板契约](docs/03-specs/panel-contract.md)：
+`GET <prefix>/panel` 返回自包含 HTML（零外部资源、绝对路径调自己 API、错误可见）。
+
 ## 支持的协议
 
 | 层级 | 协议 | 支持状态 |

@@ -1,113 +1,255 @@
 #!/usr/bin/env node
 
 /**
- * PluginHub — Reverse Proxy + Unified Plugin Dashboard
+ * PluginHub — connector-driven plugin dashboard.
  *
- * Design:
- *  - Plugins with a standalone panel (Agent Memory Hub) are embedded as-is via
- *    an iframe. Their internal absolute /api/* calls are rewritten through the
- *    proxy so no re-rendering is needed.
- *  - Plugins whose UI only exists inside the DSH React tree
- *    (token-usage-statistic, dsh-env-manager) cannot be iframed: DSH requires
- *    an authenticated session that cannot be proxied. For those, PluginHub
- *    serves their live API data through the proxy and links out to the real
- *    panel in a new window, where the browser session authenticates normally.
+ * Model
+ * -----
+ * A connector (connectors/*.yaml) declares, for one third-party or in-house
+ * plugin:
+ *   - upstream    : origin that owns the plugin's HTTP routes
+ *   - panelPath   : a self-contained HTML page the plugin serves itself (Tier 0)
+ *   - pathPrefixes: absolute paths the panel calls, rewritten through the proxy
+ *   - health      : liveness probe
  *
- * Routes:
- *   /proxy/memory/*        → http://127.0.0.1:7777/*
- *   /proxy/dsh/*           → http://127.0.0.1:59618/*
- *   /api/live/token        → token usage summary (proxied)
- *   /api/live/env          → environment list (proxied)
- *   /                      → dashboard
+ * PluginHub then only does three things per plugin: probe health, proxy the
+ * panel plus its API paths, and embed the panel in an iframe. There is no
+ * per-plugin rendering code.
+ *
+ * Fallback
+ * --------
+ * A connector without `panelPath` degrades to "live" mode: PluginHub proxies a
+ * JSON endpoint and renders a generic card/table view from it.
+ *
+ * Routes
+ * ------
+ *   /p/<id>/*        → upstream, with path rewrites + injected headers
+ *   /api/config      → dashboard config (connectors + health)
+ *   /                → dashboard shell
  */
 
 import { createServer, request as httpRequest } from 'node:http'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import YAML from 'yaml'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
-// ── Config ──
+// ── CLI ──────────────────────────────────────────────────────────────────────
 
-const args = process.argv.slice(2)
-function getArg(name, def) {
-  const i = args.indexOf(`--${name}`)
-  return i >= 0 && args[i + 1] ? args[i + 1] : def
+const argv = process.argv.slice(2)
+function flag(name, def) {
+  const i = argv.indexOf(`--${name}`)
+  return i >= 0 && argv[i + 1] ? argv[i + 1] : def
 }
 
-const DSH_PORT = getArg('dsh-port', '59618')
-const MEM_PORT = getArg('memory-port', '7777')
-const UI_PORT = parseInt(getArg('port', '7895'), 10)
-const DSH_HOST = `127.0.0.1:${DSH_PORT}`
-const MEM_HOST = `127.0.0.1:${MEM_PORT}`
+const UI_PORT = parseInt(flag('port', '7895'), 10)
+const CONNECTOR_DIR = join(__dirname, 'connectors')
 
 const dashboardHtml = readFileSync(join(__dirname, 'demo-dashboard.html'), 'utf-8')
 
-// ── Reverse proxy ──
+// ── Connectors ───────────────────────────────────────────────────────────────
 
-function proxyRequest(req, res, targetPort, targetPath) {
-  const opts = {
-    hostname: '127.0.0.1',
-    port: targetPort,
-    path: targetPath,
-    method: req.method,
-    headers: { ...req.headers, host: `127.0.0.1:${targetPort}` },
-  }
-  // Drop origin so the backend's same-origin check does not reject us.
-  delete opts.headers.origin
-  delete opts.headers.referer
-  if (targetPath.startsWith('/env-manager/')) {
-    opts.headers['x-env-manager-request'] = '1'
-  }
-
-  const isPanel = targetPath === '/panel' || targetPath === '/panel/'
-
-  const proxy = httpRequest(opts, (proxyRes) => {
-    const headers = { ...proxyRes.headers }
-    headers['access-control-allow-origin'] = '*'
-    delete headers['x-frame-options']
-    delete headers['content-security-policy']
-
-    if (isPanel) {
-      const chunks = []
-      proxyRes.on('data', (c) => chunks.push(c))
-      proxyRes.on('end', () => {
-        let body = Buffer.concat(chunks).toString('utf-8')
-        if ((proxyRes.headers['content-type'] || '').includes('text/html')) {
-          body = rewritePanelHtml(body)
-        }
-        delete headers['content-length']
-        res.writeHead(proxyRes.statusCode || 200, headers)
-        res.end(body)
-      })
-    } else {
-      res.writeHead(proxyRes.statusCode || 200, headers)
-      proxyRes.pipe(res)
+/** Load every *.yaml connector in the connectors directory. */
+function loadConnectors() {
+  if (!existsSync(CONNECTOR_DIR)) return []
+  const out = []
+  for (const name of readdirSync(CONNECTOR_DIR)) {
+    if (!name.endsWith('.yaml') && !name.endsWith('.yml')) continue
+    const raw = readFileSync(join(CONNECTOR_DIR, name), 'utf-8')
+    let doc
+    try {
+      doc = YAML.parse(raw)
+    } catch (e) {
+      console.error(`[connector] ${name}: parse error: ${e.message}`)
+      continue
     }
-  })
+    if (!doc || typeof doc !== 'object' || !doc.id) {
+      console.error(`[connector] ${name}: missing id, skipped`)
+      continue
+    }
+    out.push({
+      id: String(doc.id),
+      name: doc.name || doc.id,
+      icon: doc.icon || '🔌',
+      upstream: String(doc.upstream || ''),
+      panelPath: doc.panelPath || null,
+      pathPrefixes: Array.isArray(doc.pathPrefixes) ? doc.pathPrefixes.map(String) : [],
+      health: doc.health || null,
+      injectHeaders: doc.injectHeaders || {},
+      openUrl: doc.openUrl || doc.upstream || '',
+      livePath: doc.livePath || null,
+    })
+  }
+  out.sort((a, b) => a.id.localeCompare(b.id))
+  return out
+}
 
-  proxy.on('error', (e) => {
+/** Parse an upstream origin into {hostname, port}. */
+function parseUpstream(origin) {
+  try {
+    const u = new URL(origin)
+    return { hostname: u.hostname, port: parseInt(u.port || (u.protocol === 'https:' ? '443' : '80'), 10), protocol: u.protocol }
+  } catch {
+    return null
+  }
+}
+
+// ── Health ───────────────────────────────────────────────────────────────────
+
+/**
+ * Decide whether a connector can actually be embedded/shown.
+ *
+ * When the connector declares a `panelPath`, panel availability is what matters
+ * — an embeddable panel is the contract. Otherwise fall back to the declared
+ * health probe.
+ */
+async function checkHealth(connector) {
+  const target = parseUpstream(connector.upstream)
+  if (!target) return { online: false, error: `bad upstream: ${connector.upstream}` }
+
+  const base = connector.upstream.replace(/\/$/, '')
+
+  if (connector.panelPath) {
+    try {
+      const r = await fetch(`${base}${connector.panelPath}`, {
+        method: 'GET',
+        headers: connector.injectHeaders || {},
+        signal: AbortSignal.timeout(4000),
+      })
+      if (!r.ok) {
+        return {
+          online: false,
+          status: r.status,
+          error: `面板不可达：${connector.panelPath} → HTTP ${r.status}`,
+        }
+      }
+      const ct = String(r.headers.get('content-type') || '')
+      if (!ct.includes('text/html')) {
+        return { online: false, status: r.status, error: `面板内容类型异常：${ct || '(none)'}` }
+      }
+      return { online: true, status: r.status }
+    } catch (e) {
+      return { online: false, error: `面板不可达：${e.message}` }
+    }
+  }
+
+  const h = connector.health
+  if (!h || !h.path) return { online: true }
+
+  const headers = { ...(h.headers || {}) }
+  const init = { method: h.method || 'GET', headers, signal: AbortSignal.timeout(4000) }
+  if (h.body !== undefined) init.body = h.body
+
+  try {
+    const r = await fetch(`${base}${h.path}`, init)
+    // 401/403 still proves something is listening with the right routes.
+    const online = r.ok || r.status === 401 || r.status === 403
+    return { online, status: r.status }
+  } catch (e) {
+    return { online: false, error: e.message }
+  }
+}
+
+// ── Proxy ────────────────────────────────────────────────────────────────────
+
+/**
+ * Proxy one request to a connector's upstream.
+ *
+ * `rest` is the path after `/p/<id>`; the original path is reconstructed so the
+ * plugin sees exactly the route it published.
+ */
+function proxyRequest(req, res, connector, rest, search) {
+  const target = parseUpstream(connector.upstream)
+  if (!target) {
     res.writeHead(502, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ error: 'Proxy error', detail: e.message }))
+    res.end(JSON.stringify({ error: 'bad-upstream', upstream: connector.upstream }))
+    return
+  }
+
+  const targetPath = rest + search
+  const headers = { ...req.headers, host: `${target.hostname}:${target.port}` }
+  // Drop the proxy-origin headers so upstream same-origin checks pass.
+  delete headers.origin
+  delete headers.referer
+  for (const [k, v] of Object.entries(connector.injectHeaders)) headers[k.toLowerCase()] = String(v)
+
+  const isPanel = connector.panelPath && stripSlash(rest) === stripSlash(connector.panelPath)
+
+  const up = httpRequest(
+    {
+      hostname: target.hostname,
+      port: target.port,
+      path: targetPath,
+      method: req.method,
+      headers,
+    },
+    (upRes) => {
+      const outHeaders = { ...upRes.headers }
+      outHeaders['access-control-allow-origin'] = '*'
+      // Allow embedding.
+      delete outHeaders['x-frame-options']
+      delete outHeaders['content-security-policy']
+
+      if (isPanel && String(upRes.headers['content-type'] || '').includes('text/html')) {
+        const chunks = []
+        upRes.on('data', (c) => chunks.push(c))
+        upRes.on('end', () => {
+          const html = rewritePanel(Buffer.concat(chunks).toString('utf-8'), connector)
+          delete outHeaders['content-length']
+          res.writeHead(upRes.statusCode || 200, outHeaders)
+          res.end(html)
+        })
+      } else {
+        res.writeHead(upRes.statusCode || 200, outHeaders)
+        upRes.pipe(res)
+      }
+    },
+  )
+
+  up.on('error', (e) => {
+    res.writeHead(502, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ error: 'proxy-error', detail: e.message }))
   })
 
-  req.pipe(proxy)
+  req.pipe(up)
+}
+
+function stripSlash(p) {
+  return String(p || '').replace(/\/+$/, '')
 }
 
 /**
- * Rewrite a proxied panel so its absolute `/api/*` calls go through the proxy.
- * A <base> tag cannot do this for absolute paths, so we rewrite both the
- * literal string form and patch fetch/XHR at runtime as a safety net.
+ * Rewrite a proxied panel page so its absolute API paths go through the proxy.
+ *
+ * Two layers, because plugins are written by different authors:
+ *  1. literal rewrite of each declared pathPrefix inside string literals;
+ *  2. a runtime fetch/XHR patch that prefixes any request whose path starts
+ *     with a declared prefix. This catches template strings and dynamically
+ *     built URLs that layer 1 cannot see.
  */
-function rewritePanelHtml(html) {
-  let out = html.replace(/(['"`])\/api\//g, '$1/proxy/memory/api/')
+function rewritePanel(html, connector) {
+  const base = `/p/${connector.id}`
+  let out = html
 
+  for (const prefix of connector.pathPrefixes) {
+    const needle = `"${prefix}`
+    out = out.split(needle).join(`"${base}${prefix}`)
+    out = out.split(`'${prefix}`).join(`'${base}${prefix}`)
+    out = out.split('`' + prefix).join('`' + base + prefix)
+  }
+
+  const prefixes = JSON.stringify(connector.pathPrefixes)
   const patch =
     '<scr' + 'ipt>' +
     '(function(){' +
-    'var P="/proxy/memory";' +
-    'function fix(u){try{var s=String(u);if(s.charAt(0)==="/"&&s.indexOf(P+"/")!==0)return P+s;return u}catch(e){return u}}' +
+    `var B=${JSON.stringify(base)};var PS=${prefixes};` +
+    'function fix(u){try{' +
+    'var s=String(u);' +
+    'if(s.indexOf(B+"/")===0)return u;' +
+    'for(var i=0;i<PS.length;i++){if(s.indexOf(PS[i])===0)return B+s;}' +
+    'return u}catch(e){return u}}' +
     'var of=window.fetch;' +
     'window.fetch=function(i,n){' +
     'if(typeof i==="string")i=fix(i);' +
@@ -118,93 +260,42 @@ function rewritePanelHtml(html) {
     '})();' +
     '</scr' + 'ipt>'
 
-  if (out.includes('<head>')) out = out.replace('<head>', '<head>' + patch)
+  if (out.includes('</head>')) out = out.replace('</head>', patch + '</head>')
+  else if (out.includes('<head>')) out = out.replace('<head>', '<head>' + patch)
   else out = patch + out
+
   return out
 }
 
-// ── Upstream helpers ──
+// ── Config payload ───────────────────────────────────────────────────────────
 
-async function fetchJson(url, init) {
-  try {
-    const r = await fetch(url, { signal: AbortSignal.timeout(6000), ...(init || {}) })
-    const text = await r.text()
-    let body
-    try { body = JSON.parse(text) } catch { body = { _raw: text } }
-    return { ok: r.ok, status: r.status, body }
-  } catch (e) {
-    return { ok: false, status: 0, body: { error: e.message } }
-  }
-}
-
-async function getTokenUsage() {
-  return fetchJson(`http://${DSH_HOST}/token-usage-statistic/api/summary?days=7`)
-}
-
-async function getEnvList() {
-  return fetchJson(`http://${DSH_HOST}/env-manager/api`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-env-manager-request': '1' },
-    body: JSON.stringify({ op: 'list', payload: { kind: 'environment' } }),
-  })
-}
-
-async function getMemoryStatus() {
-  return fetchJson(`http://${MEM_HOST}/api/status`)
-}
-
-// ── Config payload for the dashboard ──
-
-async function buildConfig() {
-  const [token, env, mem] = await Promise.all([getTokenUsage(), getEnvList(), getMemoryStatus()])
-
+async function buildConfig(connectors) {
+  const health = await Promise.all(connectors.map(checkHealth))
   return {
-    plugins: [
-      {
-        id: 'memory',
-        name: 'Agent 记忆中心',
-        icon: '🧠',
-        mode: 'iframe',
-        url: '/proxy/memory/panel',
-        online: mem.ok,
-        error: mem.ok ? undefined : (mem.body && mem.body.error) || 'Memory Hub 未运行',
-        detail: mem.ok
-          ? `accepted ${mem.body.acceptedCount ?? '?'} 条`
-          : undefined,
-      },
-      {
-        id: 'token',
-        name: 'Token 用量统计',
-        icon: '📊',
-        mode: 'live',
-        liveUrl: '/api/live/token',
-        openUrl: `http://127.0.0.1:${DSH_PORT}/`,
-        online: token.ok,
-        error: token.ok ? undefined : (token.body && token.body.error) || 'DSH 未运行',
-      },
-      {
-        id: 'env',
-        name: '环境管理器',
-        icon: '🔧',
-        mode: 'live',
-        liveUrl: '/api/live/env',
-        openUrl: `http://127.0.0.1:${DSH_PORT}/`,
-        online: env.ok,
-        error: env.ok ? undefined : (env.body && env.body.error) || 'DSH 未运行',
-      },
-    ],
-    proxyInfo: `/proxy/memory → :${MEM_PORT} · /proxy/dsh → :${DSH_PORT}`,
+    connectors: connectors.map((c, i) => ({
+      id: c.id,
+      name: c.name,
+      icon: c.icon,
+      mode: c.panelPath ? 'iframe' : 'live',
+      url: c.panelPath ? `/p/${c.id}${c.panelPath}` : c.livePath ? `/p/${c.id}${c.livePath}` : null,
+      openUrl: c.openUrl,
+      online: health[i].online,
+      error: health[i].error,
+      status: health[i].status,
+    })),
   }
 }
 
-// ── Server ──
+// ── Server ───────────────────────────────────────────────────────────────────
 
 async function main() {
-  console.log('🚀 PluginHub — reverse proxy + unified plugin dashboard\n')
-  console.log(`   /proxy/memory/*  → http://${MEM_HOST}/*`)
-  console.log(`   /proxy/dsh/*     → http://${DSH_HOST}/*`)
-  console.log(`   /api/live/token  → DSH token summary`)
-  console.log(`   /api/live/env    → DSH environment list\n`)
+  const connectors = loadConnectors()
+  console.log(`🚀 PluginHub — ${connectors.length} connector(s) loaded from connectors/\n`)
+  for (const c of connectors) {
+    const mode = c.panelPath ? `panel ${c.panelPath}` : c.livePath ? `live ${c.livePath}` : 'no panel'
+    console.log(`   ${c.icon} ${c.id.padEnd(24)} ${c.upstream.padEnd(28)} ${mode}`)
+  }
+  console.log('')
 
   const server = createServer((req, res) => {
     const url = new URL(req.url || '/', `http://127.0.0.1:${UI_PORT}`)
@@ -221,7 +312,7 @@ async function main() {
     }
 
     if (path === '/api/config') {
-      buildConfig()
+      buildConfig(connectors)
         .then((cfg) => {
           res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
           res.end(JSON.stringify(cfg))
@@ -233,31 +324,18 @@ async function main() {
       return
     }
 
-    if (path === '/api/live/token') {
-      getTokenUsage().then((r) => {
-        res.writeHead(r.ok ? 200 : 502, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
-        res.end(JSON.stringify(r.body))
-      })
-      return
-    }
-
-    if (path === '/api/live/env') {
-      getEnvList().then((r) => {
-        res.writeHead(r.ok ? 200 : 502, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' })
-        res.end(JSON.stringify(r.body))
-      })
-      return
-    }
-
-    if (path.startsWith('/proxy/memory/')) {
-      const target = path.slice('/proxy/memory'.length) || '/'
-      proxyRequest(req, res, parseInt(MEM_PORT, 10), target + url.search)
-      return
-    }
-
-    if (path.startsWith('/proxy/dsh/')) {
-      const target = path.slice('/proxy/dsh'.length) || '/'
-      proxyRequest(req, res, parseInt(DSH_PORT, 10), target + url.search)
+    // /p/<id>/... proxy
+    const m = /^\/p\/([^/]+)(\/.*)?$/.exec(path)
+    if (m) {
+      const id = decodeURIComponent(m[1])
+      const rest = m[2] || '/'
+      const connector = connectors.find((c) => c.id === id)
+      if (!connector) {
+        res.writeHead(404, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'unknown-connector', id }))
+        return
+      }
+      proxyRequest(req, res, connector, rest, url.search)
       return
     }
 

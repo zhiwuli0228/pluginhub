@@ -11,8 +11,8 @@ body{background:#0f0f1a;color:#e0e0e0;font-family:'Segoe UI',system-ui,sans-seri
 .hdr{padding:10px 20px;background:#1a1a2e;border-bottom:1px solid #2a2a4a;display:flex;align-items:center;gap:12px;flex-shrink:0}
 .hdr h1{font-size:1.1rem;color:#60a5fa}
 .hdr .sub{color:#666;font-size:.75rem}
-.tabs{display:flex;gap:2px;padding:6px 16px;background:#12121f;border-bottom:1px solid #2a2a4a;flex-shrink:0}
-.tab{padding:8px 16px;border-radius:8px 8px 0 0;cursor:pointer;background:transparent;border:1px solid transparent;border-bottom:none;color:#888;font-size:.85rem;display:flex;align-items:center;gap:6px;transition:.15s;user-select:none}
+.tabs{display:flex;gap:2px;padding:6px 16px;background:#12121f;border-bottom:1px solid #2a2a4a;flex-shrink:0;overflow-x:auto}
+.tab{padding:8px 16px;border-radius:8px 8px 0 0;cursor:pointer;background:transparent;border:1px solid transparent;border-bottom:none;color:#888;font-size:.85rem;display:flex;align-items:center;gap:6px;transition:.15s;user-select:none;white-space:nowrap}
 .tab:hover{background:#1a1a2e;color:#ccc}
 .tab.active{background:#1a1a2e;border-color:#2a2a4a;color:#60a5fa}
 .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
@@ -21,110 +21,111 @@ body{background:#0f0f1a;color:#e0e0e0;font-family:'Segoe UI',system-ui,sans-seri
 .main{flex:1;position:relative;overflow:hidden}
 .frame{position:absolute;inset:0}
 .frame.hidden{display:none !important}
-.frame iframe{width:100%;height:100%;border:none}
+.frame iframe{width:100%;height:100%;border:none;display:block}
 .bar{padding:4px 20px;background:#12121f;border-top:1px solid #2a2a4a;font-size:.65rem;color:#444;display:flex;justify-content:space-between;flex-shrink:0}
-
-/* live data view */
-.live{height:100%;overflow:auto;padding:24px 28px}
-.live-top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:20px;flex-wrap:wrap}
-.live-title{font-size:1.25rem;color:#e0e0e0;margin-bottom:4px}
-.live-note{color:#777;font-size:.78rem;line-height:1.6;max-width:720px}
-.open-btn{padding:9px 18px;background:#2563eb;color:#fff;border:none;border-radius:8px;cursor:pointer;font-size:.85rem;text-decoration:none;display:inline-block;white-space:nowrap}
-.open-btn:hover{background:#1d4ed8}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:22px}
-.card{background:#1a1a2e;border:1px solid #2a2a4a;border-radius:10px;padding:14px 16px}
-.card .v{font-size:1.45rem;font-weight:700;color:#60a5fa;line-height:1.2;word-break:break-all}
-.card .k{color:#777;font-size:.7rem;text-transform:uppercase;letter-spacing:.5px;margin-top:4px}
-.section-title{font-size:.8rem;color:#60a5fa;text-transform:uppercase;letter-spacing:.6px;margin:18px 0 8px}
-table{width:100%;border-collapse:collapse;font-size:.82rem}
-th{text-align:left;color:#777;font-weight:500;padding:7px 10px;border-bottom:1px solid #2a2a4a;font-size:.72rem;text-transform:uppercase;letter-spacing:.4px}
-td{padding:8px 10px;border-bottom:1px solid #ffffff08;color:#ccc}
-td.mono{font-family:'Cascadia Code','Fira Code',monospace;font-size:.76rem;color:#8ab4f8}
-tr:hover td{background:#ffffff05}
-.pill{display:inline-block;padding:2px 8px;border-radius:4px;font-size:.68rem;font-weight:600}
-.pill.ok{background:#22c55e22;color:#22c55e}
-.pill.warn{background:#f59e0b22;color:#f59e0b}
 .offline{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:#888;padding:40px}
 .offline h3{color:#ef4444;margin:12px 0 8px;font-size:1.15rem}
-.offline button{margin-top:16px;padding:8px 20px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer}
-.raw-toggle{margin-top:20px;color:#555;font-size:.72rem;cursor:pointer;user-select:none}
-.raw-toggle:hover{color:#888}
-.raw{display:none;margin-top:10px;background:#12121f;border-radius:8px;padding:12px;font-family:'Cascadia Code',monospace;font-size:.72rem;color:#777;white-space:pre-wrap;max-height:260px;overflow:auto;line-height:1.5}
+.offline p{max-width:560px;line-height:1.7;font-size:.85rem}
+.offline .hint{margin-top:14px;color:#666;font-size:.78rem;line-height:1.8;text-align:left;background:#12121f;padding:12px 16px;border-radius:8px}
+.offline button{margin-top:18px;padding:8px 20px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:.85rem}
+.live{height:100%;overflow:auto;padding:22px 26px}
+.live h2{font-size:1.15rem;color:#e0e0e0;margin-bottom:6px}
+.live .note{color:#777;font-size:.78rem;line-height:1.7;margin-bottom:16px;max-width:760px}
+.live .open{display:inline-block;margin-bottom:16px;padding:8px 16px;background:#2563eb;color:#fff;border-radius:7px;text-decoration:none;font-size:.82rem}
+.live pre{background:#12121f;border-radius:8px;padding:14px;font-family:'Cascadia Code','Fira Code',monospace;font-size:.74rem;line-height:1.55;color:#9aa4b2;white-space:pre-wrap;word-break:break-all;max-height:calc(100% - 160px);overflow:auto}
+.empty{height:100%;display:flex;align-items:center;justify-content:center;color:#777;font-size:.9rem}
 </style>
 </head>
 <body>
 
 <div class="hdr">
   <h1>🔌 PluginHub</h1>
-  <span class="sub" id="header-sub">加载中...</span>
+  <span class="sub" id="header-sub">加载中…</span>
 </div>
 
 <div class="tabs" id="tabs-container"></div>
-<div class="main" id="frames-container"></div>
+<div class="main" id="frames-container"><div class="empty">正在连接插件…</div></div>
 <div class="bar">
-  <span id="proxy-info">--</span>
+  <span id="proxy-info">connectors/</span>
   <span id="ts">--:--:--</span>
 </div>
 
 <script>
-var PLUGINS = [];
+var CONNECTORS = [];
 
 function init() {
   fetch('/api/config').then(function (r) { return r.json() }).then(function (cfg) {
-    PLUGINS = cfg.plugins || [];
-    document.getElementById('proxy-info').textContent = cfg.proxyInfo || '';
-    renderTabs();
-    renderFrames();
-    updateHeader();
+    CONNECTORS = cfg.connectors || [];
+    document.getElementById('proxy-info').textContent =
+      CONNECTORS.length + ' 个连接器 · 契约驱动（connectors/*.yaml）';
+    render();
     document.getElementById('ts').textContent = new Date().toLocaleTimeString();
   }).catch(function (e) {
     document.getElementById('header-sub').textContent = '加载配置失败: ' + e.message;
+    document.getElementById('frames-container').innerHTML =
+      '<div class="empty">无法读取 /api/config：' + esc(e.message) + '</div>';
   });
 }
 
-function getActiveId() {
+function activeId() {
   var m = /[?&]tab=([^&]+)/.exec(location.search);
   if (m) return decodeURIComponent(m[1]);
-  return PLUGINS.length ? PLUGINS[0].id : '';
+  return CONNECTORS.length ? CONNECTORS[0].id : '';
 }
 
-function renderTabs() {
-  var activeId = getActiveId();
-  var html = '';
-  for (var i = 0; i < PLUGINS.length; i++) {
-    var p = PLUGINS[i];
-    html += '<div class="tab' + (p.id === activeId ? ' active' : '') + '" data-id="' + p.id + '" onclick="switchTab(\'' + p.id + '\', this)">';
-    html += '<span>' + p.icon + '</span> ' + p.name;
-    html += '<span class="dot ' + (p.online ? 'g' : 'r') + '" title="' + (p.online ? 'Online' : 'Offline') + '"></span>';
-    html += '</div>';
-  }
-  document.getElementById('tabs-container').innerHTML = html;
-}
+function render() {
+  var cur = activeId();
+  var tabs = '';
+  var frames = '';
 
-function renderFrames() {
-  var activeId = getActiveId();
-  var html = '';
-  for (var i = 0; i < PLUGINS.length; i++) {
-    var p = PLUGINS[i];
-    var hidden = p.id === activeId ? '' : ' hidden';
-    html += '<div id="f-' + p.id + '" class="frame' + hidden + '">';
-    if (!p.online) {
-      html += '<div class="offline"><div style="font-size:3rem">' + p.icon + '</div>';
-      html += '<h3>' + p.name + ' 未连接</h3><p>' + (p.error || '不可达') + '</p>';
-      html += '<button onclick="location.reload()">🔄 重试</button></div>';
-    } else if (p.mode === 'iframe') {
-      html += '<iframe src="' + p.url + '"></iframe>';
+  for (var i = 0; i < CONNECTORS.length; i++) {
+    var c = CONNECTORS[i];
+    tabs += '<div class="tab' + (c.id === cur ? ' active' : '') + '" data-id="' + esc(c.id) + '"' +
+            ' onclick="switchTab(\'' + esc(c.id) + '\', this)">' +
+            '<span>' + c.icon + '</span> ' + esc(c.name) +
+            '<span class="dot ' + (c.online ? 'g' : 'r') + '" title="' +
+            (c.online ? 'Online' : 'Offline') + '"></span></div>';
+
+    frames += '<div id="f-' + esc(c.id) + '" class="frame' + (c.id === cur ? '' : ' hidden') + '">';
+    if (!c.online) {
+      frames += '<div class="offline"><div style="font-size:3rem">' + c.icon + '</div>' +
+                '<h3>' + esc(c.name) + ' 未连接</h3>' +
+                '<p>' + esc(c.error || '上游不可达') + '</p>' +
+                '<div class="hint">检查：<br>• 上游服务是否运行（' + esc(c.openUrl || '') + '）<br>' +
+                '• 插件是否已在宿主中启用<br>' +
+                '• 若刚更新插件代码，需要重启宿主进程使其加载新路由</div>' +
+                '<button onclick="location.reload()">🔄 重试</button></div>';
+    } else if (c.mode === 'iframe') {
+      frames += '<iframe src="' + esc(c.url) + '" title="' + esc(c.name) + '"></iframe>';
     } else {
-      html += '<div class="live" id="live-' + p.id + '"><p style="color:#777">加载实时数据…</p></div>';
+      frames += '<div class="live"><h2>' + c.icon + ' ' + esc(c.name) + '</h2>' +
+                '<div class="note">该连接器没有声明 <code>panelPath</code>，以原始 JSON 形式展示上游响应。</div>' +
+                (c.openUrl ? '<a class="open" href="' + esc(c.openUrl) + '" target="_blank" rel="noopener">打开上游界面 ↗</a>' : '') +
+                '<pre id="live-' + esc(c.id) + '">加载中…</pre></div>';
     }
-    html += '</div>';
+    frames += '</div>';
   }
-  document.getElementById('frames-container').innerHTML = html;
 
-  for (var j = 0; j < PLUGINS.length; j++) {
-    var q = PLUGINS[j];
-    if (q.online && q.mode === 'live') loadLive(q);
+  document.getElementById('tabs-container').innerHTML = tabs;
+  document.getElementById('frames-container').innerHTML = frames;
+
+  for (var j = 0; j < CONNECTORS.length; j++) {
+    var q = CONNECTORS[j];
+    if (q.online && q.mode !== 'iframe') loadLive(q);
   }
+  updateHeader();
+}
+
+function loadLive(c) {
+  var box = document.getElementById('live-' + c.id);
+  if (!box) return;
+  fetch(c.url).then(function (r) { return r.text() }).then(function (t) {
+    var out = t;
+    try { out = JSON.stringify(JSON.parse(t), null, 2) } catch (e) { /* keep raw */ }
+    box.textContent = out;
+  }).catch(function (e) {
+    box.textContent = 'Error: ' + e.message;
+  });
 }
 
 function switchTab(id, el) {
@@ -140,96 +141,21 @@ function switchTab(id, el) {
 
 function updateHeader() {
   var online = 0;
-  for (var i = 0; i < PLUGINS.length; i++) if (PLUGINS[i].online) online++;
+  for (var i = 0; i < CONNECTORS.length; i++) if (CONNECTORS[i].online) online++;
   document.getElementById('header-sub').textContent =
-    '反向代理模式 · 原生面板直嵌 + 实时 API 数据 · ' + online + '/' + PLUGINS.length + ' 在线';
+    '契约驱动 · 插件自带面板直嵌 · ' + online + '/' + CONNECTORS.length + ' 在线';
 }
 
-function n(v) {
-  if (typeof v === 'number') return v.toLocaleString('en-US');
-  return v === null || v === undefined ? '—' : String(v);
-}
 function esc(s) {
   return String(s === null || s === undefined ? '' : s)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function loadLive(p) {
-  var box = document.getElementById('live-' + p.id);
-  fetch(p.liveUrl).then(function (r) { return r.json() }).then(function (d) {
-    if (p.id === 'token') box.innerHTML = renderToken(d, p);
-    else if (p.id === 'env') box.innerHTML = renderEnv(d, p);
-    else box.innerHTML = '<pre class="raw" style="display:block">' + esc(JSON.stringify(d, null, 2)) + '</pre>';
-  }).catch(function (e) {
-    box.innerHTML = '<div class="offline"><h3>加载失败</h3><p>' + esc(e.message) + '</p></div>';
-  });
-}
-
-function renderToken(d, p) {
-  var t = d.totals || {};
-  var cost = t.cost || {};
-  var range = d.range || {};
-  var html = '<div class="live-top"><div>';
-  html += '<div class="live-title">📊 Token 用量统计（近 7 天）</div>';
-  html += '<div class="live-note">数据来自 token-usage-statistic 插件的原生 API（经 PluginHub 代理，未做改造）。'
-       + '该插件的面板是 DSH 内部的 React 组件，没有独立 URL，无法直接 iframe；点击右侧按钮在 DSH 原界面查看完整图表。</div>';
-  html += '</div><a class="open-btn" href="' + p.openUrl + '" target="_blank" rel="noopener">在 DSH 中打开原面板 ↗</a></div>';
-
-  html += '<div class="cards">';
-  html += '<div class="card"><div class="v">' + n(t.tokens) + '</div><div class="k">总 Tokens</div></div>';
-  html += '<div class="card"><div class="v">' + n(t.calls) + '</div><div class="k">调用次数</div></div>';
-  html += '<div class="card"><div class="v">' + n(t.input) + '</div><div class="k">输入 Tokens</div></div>';
-  html += '<div class="card"><div class="v">' + n(t.output) + '</div><div class="k">输出 Tokens</div></div>';
-  html += '<div class="card"><div class="v">' + n(t.cacheRead) + '</div><div class="k">缓存读取</div></div>';
-  html += '<div class="card"><div class="v">' + (t.cacheHitRate != null ? t.cacheHitRate + '%' : '—') + '</div><div class="k">缓存命中率</div></div>';
-  html += '<div class="card"><div class="v">' + (cost.amount != null ? '$' + Number(cost.amount).toFixed(4) : '未定价') + '</div><div class="k">估算费用</div></div>';
-  html += '</div>';
-
-  html += '<div class="section-title">按 Provider</div><table><tr><th>Provider</th><th>Calls</th><th>Tokens</th><th>输入</th><th>输出</th><th>命中率</th></tr>';
-  var ps = d.byProvider || [];
-  for (var i = 0; i < ps.length; i++) {
-    var x = ps[i];
-    html += '<tr><td class="mono">' + esc(x.provider) + '</td><td>' + n(x.calls) + '</td><td>' + n(x.tokens)
-         + '</td><td>' + n(x.input) + '</td><td>' + n(x.output) + '</td><td>'
-         + (x.cacheHitRate != null ? x.cacheHitRate + '%' : '—') + '</td></tr>';
-  }
-  html += '</table>';
-  html += '<div style="margin-top:10px;color:#555;font-size:.72rem">区间 ' + esc(range.from || '?') + ' ~ ' + esc(range.to || '?')
-       + (cost.pricedCalls === 0 ? ' · 当前 provider 未配置价格，费用无法估算' : '') + '</div>';
-  html += '<div class="raw-toggle" onclick="var r=this.nextElementSibling;r.style.display=r.style.display===\'block\'?\'none\':\'block\'">▸ 查看原始 API 响应</div>';
-  html += '<pre class="raw">' + esc(JSON.stringify(d, null, 2)) + '</pre>';
-  return html;
-}
-
-function renderEnv(d, p) {
-  var items = (d && d.data && d.data.items) || [];
-  var html = '<div class="live-top"><div>';
-  html += '<div class="live-title">🔧 环境管理器</div>';
-  html += '<div class="live-note">数据来自 dsh-env-manager 插件的原生 API（经 PluginHub 代理，自动带上 x-env-manager-request 头）。'
-       + '该插件面板同样只存在于 DSH React 树里，完整编辑界面请点右侧按钮。</div>';
-  html += '</div><a class="open-btn" href="' + p.openUrl + '" target="_blank" rel="noopener">在 DSH 中打开原面板 ↗</a></div>';
-
-  html += '<div class="cards">';
-  html += '<div class="card"><div class="v">' + items.length + '</div><div class="k">环境数量</div></div>';
-  html += '</div>';
-
-  html += '<div class="section-title">环境列表</div><table><tr><th>ID</th><th>名称</th><th>摘要</th></tr>';
-  for (var i = 0; i < items.length; i++) {
-    var e = items[i];
-    html += '<tr><td class="mono">' + esc(e.id) + '</td><td>' + esc(e.name)
-         + '</td><td style="color:#999">' + esc(e.summary || '') + '</td></tr>';
-  }
-  if (!items.length) html += '<tr><td colspan="3" style="color:#777">暂无环境记录</td></tr>';
-  html += '</table>';
-  html += '<div class="raw-toggle" onclick="var r=this.nextElementSibling;r.style.display=r.style.display===\'block\'?\'none\':\'block\'">▸ 查看原始 API 响应</div>';
-  html += '<pre class="raw">' + esc(JSON.stringify(d, null, 2)) + '</pre>';
-  return html;
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 init();
 setInterval(function () {
-  for (var i = 0; i < PLUGINS.length; i++) {
-    if (PLUGINS[i].online && PLUGINS[i].mode === 'live') loadLive(PLUGINS[i]);
+  for (var i = 0; i < CONNECTORS.length; i++) {
+    if (CONNECTORS[i].online && CONNECTORS[i].mode !== 'iframe') loadLive(CONNECTORS[i]);
   }
 }, 20000);
 </script>
