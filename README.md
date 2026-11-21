@@ -113,6 +113,22 @@ PluginHub 只做四件事：**探面板可达性 → 代理 → 重写面板内�
 插件侧需要遵守的契约见 [面板契约](docs/03-specs/panel-contract.md)：
 `GET <prefix>/panel` 返回自包含 HTML（零外部资源、绝对路径调自己 API、错误可见）。
 
+### 第三方 MCP server（无需改造对方）
+
+别人写的 MCP server 不用遵守任何契约 —— 只要声明 `kind: mcp`，PluginHub 会从
+`tools/list` 的 JSON Schema **自动生成 Inspector 界面**（工具列表 + 参数表单 + 调用结果）：
+
+```yaml
+kind: mcp
+mcp:
+  transport: stdio
+  command: npx
+  args: ["-y", "@modelcontextprotocol/server-filesystem", "E:\\some\\dir"]
+  shell: true
+```
+
+已验证：`server-filesystem@2.4.0` 自动列出 16 个工具并真实调用成功。
+
 ## 支持的协议
 
 | 层级 | 协议 | 支持状态 |

@@ -1,0 +1,28 @@
+# Connector: Filesystem MCP server (third-party)
+#
+# Tier 2 — this is somebody else's MCP server. It ships no panel and no
+# PluginHub-specific contract, only the MCP protocol (tools/list + JSON Schema).
+# PluginHub therefore generates the UI from its tool schemas instead of asking
+# the plugin to conform to anything.
+
+id: mcp-filesystem
+name: Filesystem (MCP)
+icon: "📁"
+
+kind: mcp
+
+mcp:
+  transport: stdio
+  command: npx
+  args:
+    - "-y"
+    - "@modelcontextprotocol/server-filesystem"
+    - "E:\\009workspace\\pluginhub"
+  # `npx` is a .cmd shim on Windows, so it has to go through a shell.
+  shell: true
+  # How long an idle session is kept alive before the child process is stopped.
+  idleTimeoutMs: 300000
+  # Startup handshake budget (first run may download the package).
+  connectTimeoutMs: 120000
+  # Per JSON-RPC request budget.
+  requestTimeoutMs: 120000

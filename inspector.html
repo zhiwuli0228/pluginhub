@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MCP Inspector · PluginHub</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%232563eb'/%3E%3Cpath d='M20 20h8v8h-8zM36 20h8v8h-8zM20 36h8v8h-8zM36 36h8v8h-8z' fill='%23fff'/%3E%3C/svg%3E">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0f0f1a;color:#e0e0e0;font-family:'Segoe UI',system-ui,sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden;font-size:14px}
+.hdr{padding:10px 18px;background:#1a1a2e;border-bottom:1px solid #2a2a4a;display:flex;align-items:center;gap:12px;flex-shrink:0;flex-wrap:wrap}
+.hdr .title{font-size:1rem;font-weight:600;color:#e5e7eb}
+.hdr .tool-count{font-size:.72rem;color:#777;background:#12121f;padding:2px 8px;border-radius:4px}
+.hdr .proto{font-size:.72rem;color:#60a5fa;margin-left:auto}
+.body{flex:1;display:flex;min-height:0}
+.side{width:290px;border-right:1px solid #2a2a4a;display:flex;flex-direction:column;flex-shrink:0;background:#12121f}
+.search{padding:10px;border-bottom:1px solid #2a2a4a}
+.search input{width:100%;padding:7px 10px;background:#0f0f1a;border:1px solid #2a2a4a;border-radius:6px;color:#e0e0e0;font-size:.82rem;outline:none}
+.search input:focus{border-color:#3b82f6}
+.tools{flex:1;overflow-y:auto}
+.tool{padding:9px 12px;border-bottom:1px solid #ffffff06;cursor:pointer;border-left:3px solid transparent}
+.tool:hover{background:#ffffff08}
+.tool.active{background:#1a1a2e;border-left-color:#60a5fa}
+.tool .n{font-family:'Cascadia Code',monospace;font-size:.8rem;color:#8ab4f8;word-break:break-all}
+.tool .d{font-size:.7rem;color:#777;margin-top:3px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.pane{flex:1;overflow-y:auto;padding:18px 22px}
+.empty{height:100%;display:flex;align-items:center;justify-content:center;color:#666;font-size:.85rem;text-align:center;padding:30px;line-height:1.8}
+h2{font-size:1.05rem;color:#e5e7eb;font-family:'Cascadia Code',monospace;word-break:break-all;margin-bottom:6px}
+.desc{color:#9ca3af;font-size:.82rem;line-height:1.6;margin-bottom:12px;white-space:pre-wrap}
+.badges{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.badge{font-size:.68rem;padding:2px 8px;border-radius:4px;font-weight:600}
+.b-ro{background:#22c55e22;color:#22c55e}
+.b-des{background:#ef444422;color:#ef4444}
+.b-idem{background:#3b82f622;color:#60a5fa}
+.b-open{background:#f59e0b22;color:#f59e0b}
+.section{border-top:1px solid #2a2a4a;margin-top:16px;padding-top:14px}
+.section-title{font-size:.72rem;color:#60a5fa;text-transform:uppercase;letter-spacing:.6px;margin-bottom:10px}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:.78rem;color:#cbd5e1;margin-bottom:4px;font-family:'Cascadia Code',monospace}
+.field .req{color:#ef4444;margin-left:3px}
+.field .hint{font-size:.7rem;color:#6b7280;margin-top:3px;line-height:1.5}
+.field input[type=text],.field input[type=number],.field select,.field textarea{
+  width:100%;padding:7px 10px;background:#0f0f1a;border:1px solid #2a2a4a;border-radius:6px;
+  color:#e0e0e0;font-size:.8rem;font-family:'Cascadia Code',monospace;outline:none}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:#3b82f6}
+.field textarea{min-height:70px;resize:vertical}
+.field .bool{display:flex;align-items:center;gap:8px;font-size:.8rem;color:#cbd5e1}
+.actions{display:flex;gap:8px;align-items:center;margin-top:16px;flex-wrap:wrap}
+button{padding:8px 18px;background:#2563eb;color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:.83rem;font-weight:500}
+button:hover:not(:disabled){background:#1d4ed8}
+button:disabled{opacity:.5;cursor:default}
+button.ghost{background:transparent;border:1px solid #2a2a4a;color:#9ca3af}
+button.ghost:hover{background:#1a1a2e;color:#e0e0e0}
+.result{border-top:1px solid #2a2a4a;margin-top:16px;padding-top:14px}
+pre{background:#12121f;border-radius:8px;padding:12px;font-family:'Cascadia Code','Fira Code',monospace;
+  font-size:.74rem;line-height:1.55;color:#9aa4b2;white-space:pre-wrap;word-break:break-word;max-height:340px;overflow:auto}
+pre.err{background:#2a1114;color:#fca5a5}
+.meta{font-size:.7rem;color:#6b7280;margin-top:6px}
+.spinner{display:inline-block;width:12px;height:12px;border:2px solid #2a2a4a;border-top-color:#60a5fa;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<div class="hdr">
+  <span class="title" id="hdr-title">MCP Inspector</span>
+  <span class="tool-count" id="hdr-count">—</span>
+  <span class="proto" id="hdr-proto"></span>
+</div>
+
+<div class="body">
+  <div class="side">
+    <div class="search"><input id="q" type="text" placeholder="搜索工具…" autocomplete="off"></div>
+    <div class="tools" id="tools">
+      <div class="empty"><span class="spinner"></span>连接 MCP server…</div>
+    </div>
+  </div>
+  <div class="main">
+    <div class="pane" id="pane">
+      <div class="empty">选择左侧的工具以查看参数并调用</div>
+    </div>
+  </div>
+</div>
+
+<script>
+var CONNECTOR = '';
+var TOOLS = [];
+var SELECTED = null;
+var SERVER_INFO = null;
+
+function esc(s) {
+  return String(s === null || s === undefined ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function qs(name) {
+  var m = new RegExp('[?&]' + name + '=([^&]+)').exec(location.search);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
+function boot() {
+  CONNECTOR = qs('id');
+  if (!CONNECTOR) {
+    document.getElementById('tools').innerHTML = '<div class="empty">缺少参数 ?id=&lt;connector&gt;</div>';
+    return;
+  }
+  document.getElementById('hdr-title').textContent = CONNECTOR;
+
+  fetch('/api/mcp/' + encodeURIComponent(CONNECTOR) + '/tools')
+    .then(function (r) { return r.json() })
+    .then(function (d) {
+      if (!d.ok) {
+        document.getElementById('tools').innerHTML =
+          '<div class="empty" style="color:#ef4444">连接失败<br><br>' + esc(d.error || '未知错误') + '</div>';
+        return;
+      }
+      TOOLS = d.tools || [];
+      SERVER_INFO = d.server || null;
+      document.getElementById('hdr-count').textContent = TOOLS.length + ' 个工具';
+      if (SERVER_INFO) {
+        document.getElementById('hdr-proto').textContent =
+          (SERVER_INFO.name || '') + ' v' + (SERVER_INFO.version || '') +
+          (SERVER_INFO.protocolVersion ? ' · MCP ' + SERVER_INFO.protocolVersion : '');
+      }
+      renderTools();
+      if (TOOLS.length) selectTool(TOOLS[0].name);
+    })
+    .catch(function (e) {
+      document.getElementById('tools').innerHTML =
+        '<div class="empty" style="color:#ef4444">请求失败<br><br>' + esc(e.message) + '</div>';
+    });
+}
+
+function renderTools() {
+  var q = (document.getElementById('q').value || '').toLowerCase();
+  var list = TOOLS.filter(function (t) {
+    if (!q) return true;
+    return (t.name || '').toLowerCase().indexOf(q) >= 0 ||
+           (t.description || '').toLowerCase().indexOf(q) >= 0;
+  });
+  if (!list.length) {
+    document.getElementById('tools').innerHTML = '<div class="empty">没有匹配的工具</div>';
+    return;
+  }
+  var html = '';
+  for (var i = 0; i < list.length; i++) {
+    var t = list[i];
+    html += '<div class="tool' + (SELECTED === t.name ? ' active' : '') + '" data-name="' + esc(t.name) + '"' +
+            ' onclick="selectTool(this.getAttribute(\'data-name\'))">' +
+            '<div class="n">' + esc(t.name) + '</div>' +
+            '<div class="d">' + esc(t.description || '(无描述)') + '</div></div>';
+  }
+  document.getElementById('tools').innerHTML = html;
+}
+
+function findTool(name) {
+  for (var i = 0; i < TOOLS.length; i++) if (TOOLS[i].name === name) return TOOLS[i];
+  return null;
+}
+
+function selectTool(name) {
+  SELECTED = name;
+  renderTools();
+  var t = findTool(name);
+  if (!t) return;
+  var schema = t.inputSchema || { type: 'object', properties: {} };
+  var html = '';
+
+  html += '<h2>' + esc(t.name) + '</h2>';
+  if (t.description) html += '<div class="desc">' + esc(t.description) + '</div>';
+
+  var a = t.annotations || {};
+  var badges = '';
+  if (a.readOnlyHint) badges += '<span class="badge b-ro">只读</span>';
+  if (a.destructiveHint) badges += '<span class="badge b-des">破坏性</span>';
+  if (a.idempotentHint) badges += '<span class="badge b-idem">幂等</span>';
+  if (a.openWorldHint) badges += '<span class="badge b-open">开放世界</span>';
+  if (badges) html += '<div class="badges">' + badges + '</div>';
+
+  html += '<div class="section"><div class="section-title">参数</div><form id="form">';
+  var props = schema.properties || {};
+  var required = schema.required || [];
+  var keys = Object.keys(props);
+  if (!keys.length) {
+    html += '<div class="desc" style="margin:0">该工具不接受参数。</div>';
+  } else {
+    for (var i = 0; i < keys.length; i++) {
+      html += renderField(keys[i], props[keys[i]], required.indexOf(keys[i]) >= 0);
+    }
+  }
+  html += '</form>';
+
+  html += '<div class="actions">' +
+          '<button id="invoke" onclick="invoke()">执行</button>' +
+          '<button class="ghost" onclick="fillSample()">填充示例</button>' +
+          '<button class="ghost" onclick="toggleRaw()">原始 Schema</button>' +
+          '</div>';
+
+  html += '<pre id="raw" style="display:none">' + esc(JSON.stringify(schema, null, 2)) + '</pre>';
+  html += '<div class="result" id="result" style="display:none"></div>';
+
+  document.getElementById('pane').innerHTML = html;
+}
+
+function fieldId(name) { return 'f_' + name.replace(/[^A-Za-z0-9_]/g, '_'); }
+
+function renderField(name, spec, isRequired) {
+  spec = spec || {};
+  var id = fieldId(name);
+  var label = '<label for="' + id + '">' + esc(name) + (isRequired ? '<span class="req">*</span>' : '') + '</label>';
+  var hint = '';
+  if (spec.description) hint = '<div class="hint">' + esc(spec.description) + '</div>';
+  if (spec.default !== undefined) hint += '<div class="hint">默认: ' + esc(JSON.stringify(spec.default)) + '</div>';
+
+  var ctrl = '';
+  var t = spec.type;
+  if (Array.isArray(t)) t = t.filter(function (x) { return x !== 'null' })[0];
+
+  if (spec.enum && spec.enum.length) {
+    ctrl = '<select id="' + id + '" data-name="' + esc(name) + '" data-type="enum">';
+    ctrl += '<option value="">(未选择)</option>';
+    for (var i = 0; i < spec.enum.length; i++) {
+      ctrl += '<option value="' + esc(spec.enum[i]) + '">' + esc(spec.enum[i]) + '</option>';
+    }
+    ctrl += '</select>';
+  } else if (t === 'boolean') {
+    ctrl = '<div class="bool"><input type="checkbox" id="' + id + '" data-name="' + esc(name) + '" data-type="boolean">' +
+           '<span>启用</span></div>';
+  } else if (t === 'number' || t === 'integer') {
+    ctrl = '<input type="number" id="' + id + '" data-name="' + esc(name) + '" data-type="' + esc(t) + '"' +
+           (spec.default !== undefined ? ' value="' + esc(spec.default) + '"' : '') + '>';
+  } else if (t === 'object' || t === 'array') {
+    ctrl = '<textarea id="' + id + '" data-name="' + esc(name) + '" data-type="json" placeholder="' +
+           (t === 'array' ? '[\n  \n]' : '{\n  \n}') + '"></textarea>';
+  } else {
+    ctrl = '<input type="text" id="' + id + '" data-name="' + esc(name) + '" data-type="string"' +
+           (spec.default !== undefined ? ' value="' + esc(spec.default) + '"' : '') + '>';
+  }
+
+  return '<div class="field">' + label + ctrl + hint + '</div>';
+}
+
+function toggleRaw() {
+  var r = document.getElementById('raw');
+  r.style.display = r.style.display === 'none' ? 'block' : 'none';
+}
+
+function fillSample() {
+  var t = findTool(SELECTED);
+  if (!t) return;
+  var props = (t.inputSchema && t.inputSchema.properties) || {};
+  var demo = t.demoArguments || {};
+  Object.keys(props).forEach(function (k) {
+    var el = document.getElementById(fieldId(k));
+    if (!el) return;
+    var v = demo[k];
+    if (v === undefined) {
+      var spec = props[k] || {};
+      var ty = spec.type;
+      if (Array.isArray(ty)) ty = ty.filter(function (x) { return x !== 'null' })[0];
+      if (spec.enum && spec.enum.length) v = spec.enum[0];
+      else if (ty === 'boolean') v = false;
+      else if (ty === 'number' || ty === 'integer') v = spec.default !== undefined ? spec.default : 0;
+      else if (ty === 'array') v = [];
+      else if (ty === 'object') v = {};
+      else v = spec.default !== undefined ? spec.default : '';
+    }
+    if (el.getAttribute('data-type') === 'boolean') el.checked = Boolean(v);
+    else if (el.getAttribute('data-type') === 'json') el.value = JSON.stringify(v, null, 2);
+    else el.value = v;
+  });
+}
+
+function collectArgs() {
+  var t = findTool(SELECTED);
+  var props = (t.inputSchema && t.inputSchema.properties) || {};
+  var out = {};
+  var errors = [];
+
+  Object.keys(props).forEach(function (k) {
+    var el = document.getElementById(fieldId(k));
+    if (!el) return;
+    var kind = el.getAttribute('data-type');
+    if (kind === 'boolean') { out[k] = el.checked; return; }
+    var raw = el.value;
+    if (raw === '') return;
+    if (kind === 'number' || kind === 'integer') {
+      var num = Number(raw);
+      if (!isFinite(num)) { errors.push(k + ': 需要数字'); return; }
+      out[k] = kind === 'integer' ? Math.trunc(num) : num;
+    } else if (kind === 'json') {
+      try { out[k] = JSON.parse(raw) } catch (e) { errors.push(k + ': JSON 解析失败 — ' + e.message) }
+    } else {
+      out[k] = raw;
+    }
+  });
+
+  var required = (t.inputSchema && t.inputSchema.required) || [];
+  required.forEach(function (k) {
+    if (out[k] === undefined || out[k] === '') errors.push(k + ': 必填');
+  });
+
+  return { args: out, errors: errors };
+}
+
+function invoke() {
+  var t = findTool(SELECTED);
+  if (!t) return;
+  var got = collectArgs();
+  var btn = document.getElementById('invoke');
+  var box = document.getElementById('result');
+  box.style.display = 'block';
+
+  if (got.errors.length) {
+    box.innerHTML = '<div class="section-title" style="color:#ef4444">参数错误</div><pre class="err">' +
+                    esc(got.errors.join('\n')) + '</pre>';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>执行中…';
+  box.innerHTML = '<div class="section-title">结果</div><pre>执行中…</pre>';
+  var t0 = Date.now();
+
+  fetch('/api/mcp/' + encodeURIComponent(CONNECTOR) + '/call', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: SELECTED, arguments: got.args }),
+  })
+    .then(function (r) { return r.json() })
+    .then(function (d) {
+      var ms = Date.now() - t0;
+      if (!d.ok) {
+        box.innerHTML = '<div class="section-title" style="color:#ef4444">调用失败</div>' +
+                        '<pre class="err">' + esc(d.error || '未知错误') + '</pre>' +
+                        '<div class="meta">耗时 ' + ms + ' ms</div>';
+      } else {
+        box.innerHTML = '<div class="section-title">结果</div>' +
+                        '<pre>' + esc(JSON.stringify(d.result, null, 2)) + '</pre>' +
+                        '<div class="meta">耗时 ' + ms + ' ms</div>';
+      }
+    })
+    .catch(function (e) {
+      box.innerHTML = '<div class="section-title" style="color:#ef4444">请求失败</div>' +
+                      '<pre class="err">' + esc(e.message) + '</pre>';
+    })
+    .then(function () {
+      btn.disabled = false;
+      btn.textContent = '执行';
+    });
+}
+
+document.getElementById('q').addEventListener('input', renderTools);
+boot();
+</script>
+</body>
+</html>

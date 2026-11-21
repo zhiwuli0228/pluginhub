@@ -36,6 +36,14 @@ export interface McpStdioClientOptions {
   env?: Record<string, string>
   /** Per-request timeout in milliseconds. Defaults to 30 000. */
   requestTimeoutMs?: number
+  /**
+   * Spawn the command through a shell.
+   *
+   * Needed on Windows for `.cmd`/`.bat` launchers such as `npx`, which cannot
+   * be executed directly by `child_process.spawn`.
+   * @default false
+   */
+  shell?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -214,12 +222,15 @@ export class McpStdioClient extends EventEmitter {
 
   /** Spawn the server child process and wire up stdio listeners. */
   private _spawn(): void {
-    const { command, args, cwd, env } = this._options
+    const { command, args, cwd, env, shell } = this._options
 
     this._process = spawn(command, args ?? [], {
       cwd,
       env: env ? { ...process.env, ...env } : process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
+      // A .cmd/.bat launcher (npx, uvx shims, …) only resolves through a shell
+      // on Windows; callers that need it set `shell: true`.
+      shell: shell === true,
       // On Windows, hide the console window when possible.
       windowsHide: true,
     })

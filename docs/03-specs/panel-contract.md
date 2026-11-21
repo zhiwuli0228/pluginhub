@@ -97,7 +97,43 @@ PluginHub 的行为：
 |---|---|
 | 有 `panelPath` | iframe 直嵌（Tier 0） |
 | 只有 JSON API | 声明 `livePath`，以原始 JSON 展示 + 「打开上游界面」链接（Tier 1 降级） |
+| 只有 MCP 协议 | 声明 `kind: mcp`，PluginHub 自动生成 Inspector（Tier 2） |
 | 什么都没有 | 不注册连接器 |
+
+---
+
+## 4bis. Tier 2：第三方 MCP server（不需要插件遵守任何契约）
+
+别人写的 MCP server 既没有 panel，也不会为你改造。它们唯一提供的接口是
+`tools/list` + 输入 JSON Schema + `tools/call`。PluginHub 因此**从 schema 生成 UI**：
+
+```yaml
+id: mcp-filesystem
+name: Filesystem (MCP)
+kind: mcp
+mcp:
+  transport: stdio
+  command: npx
+  args: ["-y", "@modelcontextprotocol/server-filesystem", "E:\\009workspace\\pluginhub"]
+  shell: true          # npx 在 Windows 上是 .cmd shim，必须过 shell
+  idleTimeoutMs: 300000
+  requestTimeoutMs: 120000
+```
+
+PluginHub 的行为：
+
+1. 懒加载会话：首次访问才 spawn，同连接器共享一个进程，空闲 `idleTimeoutMs` 后关闭
+2. `/api/mcp/<id>/tools` 返回 `tools/list` 结果（含 annotations）
+3. `/api/mcp/<id>/call` 代理 `tools/call`
+4. `/mcp?id=<id>` 渲染通用 Inspector：左侧工具列表、右侧按 JSON Schema 生成表单
+   （string / number / integer / boolean / enum / array / object，含必填标记与描述提示）、
+   执行并把结果以 JSON 展示
+5. annotations 映射为只读 / 破坏性 / 幂等 / 开放世界徽章
+
+**关键点：这不是 per-plugin 代码。** 加任何一个新 MCP server 都只是加一个 YAML。
+
+已验证：`@modelcontextprotocol/server-filesystem@2.4.0` 自动列出 16 个工具，
+`list_directory` / `read_text_file` / `search_files` 等真实调用成功（7–139ms）。
 
 ---
 

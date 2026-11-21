@@ -29,9 +29,10 @@
  */
 
 import { createServer, request as httpRequest } from 'node:http'
-import { readFileSync, readdirSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { tmpdir } from 'node:os'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 import { gunzipSync, inflateSync, brotliDecompressSync } from 'node:zlib'
 import YAML from 'yaml'
 
@@ -74,6 +75,8 @@ function loadConnectors() {
       id: String(doc.id),
       name: doc.name || doc.id,
       icon: doc.icon || '🔌',
+      kind: doc.kind === 'mcp' ? 'mcp' : 'panel',
+      mcp: doc.mcp || null,
       upstream: String(doc.upstream || ''),
       panelPath: doc.panelPath || null,
       pathPrefixes: Array.isArray(doc.pathPrefixes) ? doc.pathPrefixes.map(String) : [],
@@ -97,6 +100,128 @@ function parseUpstream(origin) {
   }
 }
 
+// ── MCP sessions (Tier 2: third-party servers that only speak MCP) ───────────
+
+const inspectorHtml = readFileSync(join(__dirname, 'inspector.html'), 'utf-8')
+
+let McpClientCtor = null
+let mcpClientLoadError = null
+
+/**
+ * Build the tested core MCP client (`src/core/mcp`) into a temporary ESM module
+ * and import it. Building in memory avoids a separate build step while still
+ * reusing the P1 client instead of duplicating protocol code here.
+ */
+async function loadMcpClient() {
+  if (McpClientCtor) return McpClientCtor
+  if (mcpClientLoadError) throw mcpClientLoadError
+  try {
+    const { build } = await import('esbuild')
+    const result = await build({
+      entryPoints: [join(__dirname, 'src/core/mcp/index.ts')],
+      bundle: true,
+      format: 'esm',
+      platform: 'node',
+      target: 'node20',
+      write: false,
+      logLevel: 'silent',
+    })
+    const out = result.outputFiles[0].text
+    const tmp = join(tmpdir(), `pluginhub-mcp-client-${process.pid}.mjs`)
+    writeFileSync(tmp, out, 'utf-8')
+    const mod = await import(pathToFileURL(tmp).href)
+    McpClientCtor = mod.McpStdioClient
+    return McpClientCtor
+  } catch (e) {
+    mcpClientLoadError = e
+    throw e
+  }
+}
+
+/** Live MCP server processes, keyed by connector id. */
+const mcpSessions = new Map()
+
+/**
+ * Get (or lazily start) an MCP session for a connector.
+ *
+ * Sessions are shared per connector and reaped after `idleTimeoutMs`; a
+ * concurrent second caller awaits the in-flight connect rather than spawning a
+ * duplicate process.
+ */
+async function getMcpSession(connector) {
+  const existing = mcpSessions.get(connector.id)
+  if (existing) {
+    existing.lastUsed = Date.now()
+    if (existing.promise) return existing.promise
+    if (existing.client && existing.client.connected) return existing
+    // Dead session: drop it and reconnect below.
+    mcpSessions.delete(connector.id)
+  }
+
+  const cfg = connector.mcp || {}
+  if (cfg.transport && cfg.transport !== 'stdio') {
+    throw new Error(`unsupported MCP transport: ${cfg.transport} (only stdio in this build)`)
+  }
+  if (!cfg.command) throw new Error('connector.mcp.command is required for stdio transport')
+
+  const Client = await loadMcpClient()
+  const client = new Client({
+    command: cfg.command,
+    args: Array.isArray(cfg.args) ? cfg.args.map(String) : [],
+    cwd: cfg.cwd || undefined,
+    env: cfg.env || undefined,
+    requestTimeoutMs: Number(cfg.requestTimeoutMs) || 120000,
+    // Connectors that launch through a shim (npx, uvx) set this explicitly.
+    shell: cfg.shell === true,
+  })
+
+  const session = { id: connector.id, client, lastUsed: Date.now(), promise: null, tools: null, server: null }
+
+  session.promise = (async () => {
+    const info = await client.connect()
+    session.server = {
+      name: info && info.serverInfo ? info.serverInfo.name : '',
+      version: info && info.serverInfo ? info.serverInfo.version : '',
+      protocolVersion: info ? info.protocolVersion : '',
+      capabilities: info ? info.capabilities : {},
+    }
+    session.tools = await client.listTools()
+    session.promise = null
+    return session
+  })()
+
+  mcpSessions.set(connector.id, session)
+  try {
+    return await session.promise
+  } catch (e) {
+    mcpSessions.delete(connector.id)
+    try { await client.close() } catch { /* already gone */ }
+    throw e
+  }
+}
+
+/** Stop sessions that have been idle longer than the connector allows. */
+function reapMcpSessions(connectors) {
+  const now = Date.now()
+  for (const [id, s] of mcpSessions) {
+    const c = connectors.find((x) => x.id === id)
+    const idleMs = Number(c && c.mcp && c.mcp.idleTimeoutMs) || 300000
+    if (s.promise) continue
+    if (now - s.lastUsed > idleMs) {
+      mcpSessions.delete(id)
+      try { s.client.close() } catch { /* best effort */ }
+      console.log(`[mcp] closed idle session ${id}`)
+    }
+  }
+}
+
+async function shutdownMcpSessions() {
+  for (const [, s] of mcpSessions) {
+    try { await s.client.close() } catch { /* best effort */ }
+  }
+  mcpSessions.clear()
+}
+
 // ── Health ───────────────────────────────────────────────────────────────────
 
 /**
@@ -107,6 +232,18 @@ function parseUpstream(origin) {
  * health probe.
  */
 async function checkHealth(connector) {
+  // MCP connectors have no HTTP surface to probe. Report the live session state
+  // and let the inspector page surface connection errors in detail.
+  if (connector.kind === 'mcp') {
+    const s = mcpSessions.get(connector.id)
+    if (s && s.promise) return { online: true, state: 'connecting' }
+    if (s && s.client && s.client.connected) {
+      return { online: true, state: 'connected', toolCount: Array.isArray(s.tools) ? s.tools.length : undefined }
+    }
+    if (connector._mcpError) return { online: false, error: connector._mcpError }
+    return { online: true, state: 'idle' }
+  }
+
   const target = parseUpstream(connector.upstream)
   if (!target) return { online: false, error: `bad upstream: ${connector.upstream}` }
 
@@ -312,12 +449,21 @@ async function buildConfig(connectors) {
       id: c.id,
       name: c.name,
       icon: c.icon,
-      mode: c.panelPath ? 'iframe' : 'live',
-      url: c.panelPath ? `/p/${c.id}${c.panelPath}` : c.livePath ? `/p/${c.id}${c.livePath}` : null,
+      mode: c.kind === 'mcp' ? 'mcp' : c.panelPath ? 'iframe' : 'live',
+      url:
+        c.kind === 'mcp'
+          ? `/mcp?id=${encodeURIComponent(c.id)}`
+          : c.panelPath
+            ? `/p/${c.id}${c.panelPath}`
+            : c.livePath
+              ? `/p/${c.id}${c.livePath}`
+              : null,
       openUrl: c.openUrl,
       online: health[i].online,
       error: health[i].error,
       status: health[i].status,
+      state: health[i].state,
+      toolCount: health[i].toolCount,
     })),
   }
 }
@@ -328,8 +474,16 @@ async function main() {
   const connectors = loadConnectors()
   console.log(`🚀 PluginHub — ${connectors.length} connector(s) loaded from connectors/\n`)
   for (const c of connectors) {
-    const mode = c.panelPath ? `panel ${c.panelPath}` : c.livePath ? `live ${c.livePath}` : 'no panel'
-    console.log(`   ${c.icon} ${c.id.padEnd(24)} ${c.upstream.padEnd(28)} ${mode}`)
+    const mode =
+      c.kind === 'mcp'
+        ? `mcp ${c.mcp && c.mcp.command ? c.mcp.command + ' ' + (c.mcp.args || []).join(' ') : '(no command)'}`
+        : c.panelPath
+          ? `panel ${c.panelPath}`
+          : c.livePath
+            ? `live ${c.livePath}`
+            : 'no panel'
+    const upstream = c.kind === 'mcp' ? '' : c.upstream
+    console.log(`   ${c.icon} ${c.id.padEnd(24)} ${upstream.padEnd(28)} ${mode}`)
   }
   console.log('')
 
@@ -360,6 +514,62 @@ async function main() {
       return
     }
 
+    // ── MCP: tool list ─────────────────────────────────────────────────────
+    const mcpTools = /^\/api\/mcp\/([^/]+)\/tools$/.exec(path)
+    if (mcpTools && req.method === 'GET') {
+      const id = decodeURIComponent(mcpTools[1])
+      const connector = connectors.find((c) => c.id === id && c.kind === 'mcp')
+      if (!connector) {
+        sendJson(res, 404, { ok: false, error: `unknown MCP connector: ${id}` })
+        return
+      }
+      getMcpSession(connector)
+        .then((s) => {
+          sendJson(res, 200, { ok: true, tools: s.tools || [], server: s.server })
+        })
+        .catch((e) => {
+          connector._mcpError = e.message
+          sendJson(res, 200, { ok: false, error: e.message })
+        })
+      return
+    }
+
+    // ── MCP: tool call ─────────────────────────────────────────────────────
+    const mcpCall = /^\/api\/mcp\/([^/]+)\/call$/.exec(path)
+    if (mcpCall && req.method === 'POST') {
+      const id = decodeURIComponent(mcpCall[1])
+      const connector = connectors.find((c) => c.id === id && c.kind === 'mcp')
+      if (!connector) {
+        sendJson(res, 404, { ok: false, error: `unknown MCP connector: ${id}` })
+        return
+      }
+      readJsonBody(req)
+        .then(async (body) => {
+          const name = body && body.name
+          const args = (body && body.arguments) || {}
+          if (!name) {
+            sendJson(res, 400, { ok: false, error: 'body.name is required' })
+            return
+          }
+          try {
+            const s = await getMcpSession(connector)
+            const result = await s.client.callTool(name, args)
+            sendJson(res, 200, { ok: true, result })
+          } catch (e) {
+            sendJson(res, 200, { ok: false, error: e.message })
+          }
+        })
+        .catch((e) => sendJson(res, 400, { ok: false, error: e.message }))
+      return
+    }
+
+    // ── MCP inspector page ─────────────────────────────────────────────────
+    if (path === '/mcp') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache' })
+      res.end(inspectorHtml)
+      return
+    }
+
     // /p/<id>/... proxy
     const m = /^\/p\/([^/]+)(\/.*)?$/.exec(path)
     if (m) {
@@ -369,6 +579,10 @@ async function main() {
       if (!connector) {
         res.writeHead(404, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ error: 'unknown-connector', id }))
+        return
+      }
+      if (connector.kind === 'mcp') {
+        sendJson(res, 400, { error: 'mcp connectors are served at /mcp?id=<id>, not /p/<id>' })
         return
       }
       proxyRequest(req, res, connector, rest, url.search)
@@ -389,10 +603,68 @@ async function main() {
     console.log(`🌐 http://127.0.0.1:${UI_PORT}\n`)
   })
 
-  process.on('SIGINT', () => {
+  // Warm MCP sessions in the background so the dashboard reflects reality
+  // without making /api/config wait on a child-process handshake.
+  for (const c of connectors) {
+    if (c.kind !== 'mcp') continue
+    getMcpSession(c)
+      .then((s) => console.log(`[mcp] ${c.id}: ${s.tools ? s.tools.length : 0} tool(s) ready`))
+      .catch((e) => {
+        c._mcpError = e.message
+        console.error(`[mcp] ${c.id}: connect failed — ${e.message}`)
+      })
+  }
+
+  const reaper = setInterval(() => reapMcpSessions(connectors), 30000)
+  reaper.unref()
+
+  const bye = async () => {
+    console.log('\n[mcp] closing sessions…')
+    await shutdownMcpSessions()
     server.close()
     process.exit(0)
+  }
+  process.on('SIGINT', bye)
+  process.on('SIGTERM', bye)
+}
+
+/** Small JSON body reader for the MCP call endpoint. */
+function readJsonBody(req, limitBytes = 2 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    let size = 0
+    req.on('data', (c) => {
+      size += c.length
+      if (size > limitBytes) {
+        reject(new Error('request body too large'))
+        req.destroy()
+        return
+      }
+      chunks.push(c)
+    })
+    req.on('end', () => {
+      const text = Buffer.concat(chunks).toString('utf-8')
+      if (!text) return resolve({})
+      try {
+        resolve(JSON.parse(text))
+      } catch (e) {
+        reject(new Error(`invalid JSON body: ${e.message}`))
+      }
+    })
+    req.on('error', reject)
   })
+}
+
+/** Write a JSON response. */
+function sendJson(res, status, body) {
+  const payload = JSON.stringify(body)
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': Buffer.byteLength(payload),
+    'Access-Control-Allow-Origin': '*',
+    'Cache-Control': 'no-store',
+  })
+  res.end(payload)
 }
 
 main().catch((e) => {
