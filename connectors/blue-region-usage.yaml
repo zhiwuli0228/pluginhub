@@ -1,0 +1,25 @@
+# Connector: BlueRegion Usage（华为云 / 蓝区用量面板）
+#
+# 这是一个**零构建静态面板**：`panel/index.html` + 原生 JS + ECharts CDN。
+# 它没有服务端进程，也不需要构建，设计上是"双击 index.html 直接看"。
+#
+# 所以不需要代理、不需要发现端口 —— PluginHub 直接把目录静态托管出来并 iframe 嵌入。
+#
+# 数据来源是远端 API 网关（`gatewayBaseUrl` + 用户自己的 `apiKey`），
+# 由面板自己的引导视图收集，或由 `panel/config.js` 提供（该文件被 gitignore）。
+
+id: blue-region-usage
+name: BlueRegion 用量
+icon: "🟦"
+
+kind: static
+staticRoot: E:\009workspace\huawei\BlueRegionUsage\panel
+entry: index.html
+
+# 面板会 `<script src="config.js">` 引入本机私有配置；该文件按设计存在 .gitignore 里，
+# 未创建时浏览器会报 404。声明为可选后，PluginHub 以空脚本响应，
+# 面板看到的是"没有 window.APP_CONFIG"，与文件缺失时行为一致，但控制台保持干净。
+optionalFiles:
+  - config.js
+
+offlineHint: 静态面板未找到入口文件。请确认 staticRoot 指向 BlueRegionUsage 的 panel 目录，且其中存在 index.html。

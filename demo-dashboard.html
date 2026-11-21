@@ -109,7 +109,7 @@ function render() {
       frames += '<button class="ghost" onclick="rediscover()" style="margin-left:8px">🔄 重新扫描本机</button>';
       frames += '<div id="launchmsg-' + esc(c.id) + '" class="hint" style="display:none"></div>';
       frames += '</div>';
-    } else if (c.mode === 'iframe' || c.mode === 'mcp') {
+    } else if (c.mode === 'iframe' || c.mode === 'mcp' || c.mode === 'static') {
       frames += '<iframe src="' + esc(c.url) + '" title="' + esc(c.name) + '"></iframe>';
     } else {
       frames += '<div class="live"><h2>' + c.icon + ' ' + esc(c.name) + '</h2>' +

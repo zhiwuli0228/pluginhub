@@ -29,8 +29,8 @@
  */
 
 import { createServer, request as httpRequest } from 'node:http'
-import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { readFileSync, writeFileSync, readdirSync, existsSync, statSync, createReadStream } from 'node:fs'
+import { join, dirname, resolve, sep, extname } from 'node:path'
 import { tmpdir } from 'node:os'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { gunzipSync, inflateSync, brotliDecompressSync } from 'node:zlib'
@@ -75,8 +75,12 @@ function loadConnectors() {
       id: String(doc.id),
       name: doc.name || doc.id,
       icon: doc.icon || '🔌',
-      kind: doc.kind === 'mcp' ? 'mcp' : 'panel',
+      kind: doc.kind === 'mcp' ? 'mcp' : doc.kind === 'static' ? 'static' : 'panel',
       mcp: doc.mcp || null,
+      // Static connectors serve a local directory themselves.
+      staticRoot: doc.staticRoot ? String(doc.staticRoot) : null,
+      entry: doc.entry ? String(doc.entry) : 'index.html',
+      optionalFiles: Array.isArray(doc.optionalFiles) ? doc.optionalFiles.map(String) : [],
       // `upstream` may be a literal origin, or the string `auto` meaning
       // "discover it on this machine".
       upstreamRaw: doc.upstream == null ? 'auto' : String(doc.upstream),
@@ -106,6 +110,119 @@ function parseUpstream(origin) {
   }
 }
 
+// ── Static hosting (plugins that ship a zero-build HTML panel) ───────────────
+
+/** Extension → content type for static file serving. */
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.htm': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.txt': 'text/plain; charset=utf-8',
+  '.md': 'text/plain; charset=utf-8',
+  '.csv': 'text/csv; charset=utf-8'
+}
+
+/**
+ * Serve one file out of a connector's static root.
+ *
+ * The resolved path must stay inside the root — `..`, absolute paths and
+ * symlinks that escape are refused.
+ */
+function serveStatic(req, res, connector, relPath) {
+  const root = resolve(String(connector.staticRoot || ''))
+  let rel = decodeURIComponent(relPath || '/')
+  if (rel === '/' || rel === '') rel = '/' + (connector.entry || 'index.html')
+
+  const target = resolve(root, '.' + rel)
+  if (target !== root && !target.startsWith(root + sep)) {
+    sendJson(res, 403, { error: 'path-outside-root', path: rel })
+    return
+  }
+
+  let stat
+  try {
+    stat = statSync(target)
+  } catch {
+    // Some panels reference an optional local config file that may legitimately
+    // not exist (it is gitignored). Serving it as an empty script keeps the
+    // browser console clean without inventing behaviour: the panel sees an
+    // absent `window.APP_CONFIG`, exactly as with a 404.
+    const base = target.slice(target.lastIndexOf(sep) + 1)
+    const optional = Array.isArray(connector.optionalFiles) ? connector.optionalFiles : []
+    if (optional.includes(base)) {
+      const ext = extname(target).toLowerCase()
+      res.writeHead(200, {
+        'Content-Type': MIME[ext] || 'text/plain; charset=utf-8',
+        'Content-Length': '0',
+        'Cache-Control': 'no-store',
+      })
+      res.end()
+      return
+    }
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
+    res.end(`Not Found: ${rel}`)
+    return
+  }
+  if (stat.isDirectory()) {
+    const index = join(target, 'index.html')
+    try {
+      statSync(index)
+      res.writeHead(302, { Location: `${req.url.replace(/\/?$/, '/')}index.html` })
+      res.end()
+      return
+    } catch {
+      res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' })
+      res.end('Directory listing is disabled')
+      return
+    }
+  }
+
+  const ext = extname(target).toLowerCase()
+  res.writeHead(200, {
+    'Content-Type': MIME[ext] || 'application/octet-stream',
+    'Content-Length': String(stat.size),
+    'Cache-Control': 'no-cache',
+  })
+  if (req.method === 'HEAD') {
+    res.end()
+    return
+  }
+  createReadStream(target)
+    .on('error', () => {
+      if (!res.headersSent) res.writeHead(500)
+      res.end()
+    })
+    .pipe(res)
+}
+
+/** A static connector is online when its entry file exists on disk. */
+function checkStaticHealth(connector) {
+  const root = resolve(String(connector.staticRoot || ''))
+  const entry = resolve(root, '.' + '/' + (connector.entry || 'index.html'))
+  if (!entry.startsWith(root)) return { online: false, error: 'entry outside root' }
+  try {
+    const st = statSync(entry)
+    if (!st.isFile()) return { online: false, error: `entry is not a file: ${connector.entry}` }
+    return { online: true, endpoint: `file://${root}`, state: 'static' }
+  } catch {
+    return { online: false, error: `静态入口不存在：${entry}` }
+  }
+}
+
 // ── Origin resolution (local discovery) ──────────────────────────────────────
 
 /** connectorId → { origin, source, at } */
@@ -119,7 +236,7 @@ const RESOLVE_TTL_MS = 15000
  * then port hints, then a listening-port scan — all validated by fingerprint.
  */
 async function resolveConnector(connector, force = false) {
-  if (connector.kind === 'mcp') return { origin: null, source: null }
+  if (connector.kind === 'mcp' || connector.kind === 'static') return { origin: null, source: null }
 
   if (connector.upstreamRaw && connector.upstreamRaw !== 'auto') {
     return { origin: connector.upstreamRaw.replace(/\/$/, ''), source: 'configured' }
@@ -319,6 +436,9 @@ async function shutdownMcpSessions() {
  * health probe.
  */
 async function checkHealth(connector) {
+  // Static connectors have no HTTP upstream: PluginHub serves their directory.
+  if (connector.kind === 'static') return checkStaticHealth(connector)
+
   // MCP connectors have no HTTP surface to probe. Report the live session state
   // and let the inspector page surface connection errors in detail.
   if (connector.kind === 'mcp') {
@@ -544,15 +664,17 @@ async function buildConfig(connectors) {
         id: c.id,
         name: c.name,
         icon: c.icon,
-        mode: c.kind === 'mcp' ? 'mcp' : c.panelPath ? 'iframe' : 'live',
+        mode: c.kind === 'mcp' ? 'mcp' : c.kind === 'static' ? 'static' : c.panelPath ? 'iframe' : 'live',
         url:
           c.kind === 'mcp'
             ? `/mcp?id=${encodeURIComponent(c.id)}`
-            : resolvedOrigin && c.panelPath
-              ? `/p/${c.id}${c.panelPath}`
-              : resolvedOrigin && c.livePath
-                ? `/p/${c.id}${c.livePath}`
-                : null,
+            : c.kind === 'static'
+              ? `/s/${c.id}/${c.entry || 'index.html'}`
+              : resolvedOrigin && c.panelPath
+                ? `/p/${c.id}${c.panelPath}`
+                : resolvedOrigin && c.livePath
+                  ? `/p/${c.id}${c.livePath}`
+                  : null,
         openUrl: c.openUrl || (resolvedOrigin ? resolvedOrigin + (c.panelPath || '/') : null),
         online: h.online,
         error: h.error,
@@ -560,9 +682,11 @@ async function buildConfig(connectors) {
         state: h.state,
         toolCount: h.toolCount,
         // Transparency: where did this endpoint come from, and can we start it?
-        endpoint: resolvedOrigin,
-        endpointSource: h.source || null,
-        canLaunch: Boolean(c.kind !== 'mcp' && c.launch && c.launch.command && !h.online),
+        endpoint: resolvedOrigin || h.endpoint || null,
+        endpointSource: h.source || (c.kind === 'static' ? 'static-dir' : null),
+        canLaunch: Boolean(
+          c.kind !== 'mcp' && c.kind !== 'static' && c.launch && c.launch.command && !h.online,
+        ),
         launchHint: c.launch && c.launch.command
           ? [c.launch.command, ...(c.launch.args || [])].join(' ')
           : null,
@@ -706,6 +830,20 @@ async function main() {
       return
     }
 
+    // ── Static hosting: /s/<id>/... ────────────────────────────────────────
+    const staticMatch = /^\/s\/([^/]+)(\/.*)?$/.exec(path)
+    if (staticMatch) {
+      const id = decodeURIComponent(staticMatch[1])
+      const connector = connectors.find((c) => c.id === id && c.kind === 'static')
+      if (!connector) {
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
+        res.end(`Unknown static connector: ${id}`)
+        return
+      }
+      serveStatic(req, res, connector, staticMatch[2] || '/')
+      return
+    }
+
     // /p/<id>/... proxy
     const m = /^\/p\/([^/]+)(\/.*)?$/.exec(path)
     if (m) {
@@ -719,6 +857,10 @@ async function main() {
       }
       if (connector.kind === 'mcp') {
         sendJson(res, 400, { error: 'mcp connectors are served at /mcp?id=<id>, not /p/<id>' })
+        return
+      }
+      if (connector.kind === 'static') {
+        sendJson(res, 400, { error: 'static connectors are served at /s/<id>/, not /p/<id>' })
         return
       }
       resolveConnector(connector)

@@ -129,6 +129,18 @@ mcp:
 
 已验证：`server-filesystem@2.4.0` 自动列出 16 个工具并真实调用成功。
 
+### 纯静态面板（零构建 HTML）
+
+不需要服务端的面板（例如 BlueRegion 用量面板）声明 `kind: static`，
+PluginHub 直接把目录托管出来并嵌入，带 MIME、路径穿越防护、可选文件处理：
+
+```yaml
+kind: static
+staticRoot: E:\009workspace\huawei\BlueRegionUsage\panel
+entry: index.html
+optionalFiles: [config.js]
+```
+
 ## 支持的协议
 
 | 层级 | 协议 | 支持状态 |

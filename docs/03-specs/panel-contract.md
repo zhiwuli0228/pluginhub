@@ -98,7 +98,39 @@ PluginHub 的行为：
 | 有 `panelPath` | iframe 直嵌（Tier 0） |
 | 只有 JSON API | 声明 `livePath`，以原始 JSON 展示 + 「打开上游界面」链接（Tier 1 降级） |
 | 只有 MCP 协议 | 声明 `kind: mcp`，PluginHub 自动生成 Inspector（Tier 2） |
+| **纯静态 HTML 面板（零构建）** | 声明 `kind: static`，PluginHub 直接托管该目录并嵌入 |
 | 什么都没有 | 不注册连接器 |
+
+---
+
+## 4ter. Tier 0b：纯静态面板（`kind: static`）
+
+有些面板根本不需要服务端 —— 一个 `index.html` + 原生 JS 就够，设计上就是"双击打开"。
+PluginHub 直接把目录托管出来：
+
+```yaml
+id: blue-region-usage
+name: BlueRegion 用量
+icon: "🟦"
+kind: static
+staticRoot: E:\009workspace\huawei\BlueRegionUsage\panel
+entry: index.html
+optionalFiles:      # 声明"允许不存在"的文件
+  - config.js
+```
+
+行为：
+
+1. `GET /s/<id>/<path>` 从 `staticRoot` 读文件，带正确 MIME（html/css/js/svg/woff2/…）
+2. **路径穿越防护**：解析后的绝对路径必须仍在 `staticRoot` 内，`..`／绝对路径一律拒绝
+3. 目录不列出内容；`/dir/` 有 `index.html` 时重定向，否则 403
+4. `optionalFiles` 里的文件缺失时返回 **200 空响应**。面板会 `<script src="config.js">`
+   引入本机私有配置，该文件按设计被 gitignore；声明为可选后控制台不再有 404，
+   而面板看到的仍是"没有 `window.APP_CONFIG`"，行为不变
+5. 健康检查只看**磁盘上的入口文件是否存在**，不发网络请求
+
+数据来源可以是远端 API（BlueRegion 就是这样：面板自己去调网关），
+PluginHub 不参与、不代理、也不需要知道凭证。
 
 ---
 
