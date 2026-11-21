@@ -1,27 +1,22 @@
 # Connector: token-usage-statistic
 #
-# Tier 0 contract — the plugin serves its own self-contained panel page, so
-# PluginHub only has to proxy it and embed it. No re-rendering.
+# Tier 0 contract — the plugin serves its own self-contained panel page
+# (`/token-usage-statistic/panel`, added in 1.1.0), so PluginHub only proxies
+# and embeds it. No re-rendering.
 
 id: token-usage-statistic
 name: Token 用量统计
 icon: "📊"
 
-# Upstream origin that owns this plugin's HTTP routes.
 upstream: http://127.0.0.1:59618
 
-# Self-contained panel page (served by the plugin itself).
 panelPath: /token-usage-statistic/panel
 
-# Every absolute path under this prefix is rewritten through the proxy so the
-# panel's own fetch() calls keep working inside the iframe.
 pathPrefixes:
   - /token-usage-statistic/
 
-# Liveness probe.
 health:
-  path: /token-usage-statistic/api/summary?days=1
+  path: /token-usage-statistic/panel
   method: GET
 
-# Optional: open the host UI for features that need the host session.
 openUrl: http://127.0.0.1:59618/

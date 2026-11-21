@@ -1,8 +1,8 @@
 # Connector: dsh-env-manager
 #
-# Tier 0 contract — the plugin serves its own panel; PluginHub proxies + embeds.
-# This plugin additionally requires a request header on its API, so the
-# connector injects it at the proxy layer.
+# Tier 0 contract — the plugin serves its own panel page (`/env-manager/panel`,
+# added in 0.2.0). Its API additionally requires a request header, injected at
+# the proxy layer.
 
 id: dsh-env-manager
 name: 环境管理器
@@ -16,12 +16,8 @@ pathPrefixes:
   - /env-manager/
 
 health:
-  path: /env-manager/api
-  method: POST
-  headers:
-    content-type: application/json
-    x-env-manager-request: "1"
-  body: '{"op":"list","payload":{"kind":"environment"}}'
+  path: /env-manager/panel
+  method: GET
 
 # Header the plugin's API requires on every request.
 injectHeaders:
