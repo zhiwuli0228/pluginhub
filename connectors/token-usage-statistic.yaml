@@ -8,7 +8,7 @@ id: token-usage-statistic
 name: Token 用量统计
 icon: "📊"
 
-upstream: http://127.0.0.1:59618
+upstream: http://127.0.0.1:62724
 
 panelPath: /token-usage-statistic/panel
 
@@ -19,4 +19,4 @@ health:
   path: /token-usage-statistic/panel
   method: GET
 
-openUrl: http://127.0.0.1:59618/
+openUrl: http://127.0.0.1:62724/

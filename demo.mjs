@@ -32,6 +32,7 @@ import { createServer, request as httpRequest } from 'node:http'
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { gunzipSync, inflateSync, brotliDecompressSync } from 'node:zlib'
 import YAML from 'yaml'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -173,6 +174,9 @@ function proxyRequest(req, res, connector, rest, search) {
   // Drop the proxy-origin headers so upstream same-origin checks pass.
   delete headers.origin
   delete headers.referer
+  // Ask upstream for an uncompressed body: the panel path is buffered and
+  // rewritten as text, and a stray content-encoding would corrupt it.
+  headers['accept-encoding'] = 'identity'
   for (const [k, v] of Object.entries(connector.injectHeaders)) headers[k.toLowerCase()] = String(v)
 
   const isPanel = connector.panelPath && stripSlash(rest) === stripSlash(connector.panelPath)
@@ -196,7 +200,14 @@ function proxyRequest(req, res, connector, rest, search) {
         const chunks = []
         upRes.on('data', (c) => chunks.push(c))
         upRes.on('end', () => {
-          const html = rewritePanel(Buffer.concat(chunks).toString('utf-8'), connector)
+          // Some upstreams compress even when asked not to; decode defensively
+          // so the rewrite sees real HTML and the browser gets a clean body.
+          const { text, encoding } = decodeBody(
+            Buffer.concat(chunks),
+            upRes.headers['content-encoding'],
+          )
+          if (encoding) delete outHeaders['content-encoding']
+          const html = rewritePanel(text, connector)
           delete outHeaders['content-length']
           res.writeHead(upRes.statusCode || 200, outHeaders)
           res.end(html)
@@ -218,6 +229,31 @@ function proxyRequest(req, res, connector, rest, search) {
 
 function stripSlash(p) {
   return String(p || '').replace(/\/+$/, '')
+}
+
+/**
+ * Decode an upstream body according to its content-encoding.
+ *
+ * Returns the text plus the encoding that was actually applied, so the caller
+ * knows whether the response header must be removed.
+ */
+function decodeBody(buf, contentEncoding) {
+  const enc = String(contentEncoding || '').toLowerCase().trim()
+  if (!enc || enc === 'identity') return { text: buf.toString('utf-8'), encoding: null }
+  try {
+    if (enc === 'gzip' || enc === 'x-gzip') {
+      return { text: gunzipSync(buf).toString('utf-8'), encoding: 'gzip' }
+    }
+    if (enc === 'deflate') {
+      return { text: inflateSync(buf).toString('utf-8'), encoding: 'deflate' }
+    }
+    if (enc === 'br') {
+      return { text: brotliDecompressSync(buf).toString('utf-8'), encoding: 'br' }
+    }
+  } catch {
+    // Fall through: hand back the raw bytes rather than an empty page.
+  }
+  return { text: buf.toString('utf-8'), encoding: null }
 }
 
 /**

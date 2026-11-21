@@ -8,7 +8,7 @@ id: dsh-env-manager
 name: 环境管理器
 icon: "🔧"
 
-upstream: http://127.0.0.1:59618
+upstream: http://127.0.0.1:62724
 
 panelPath: /env-manager/panel
 
@@ -23,4 +23,4 @@ health:
 injectHeaders:
   x-env-manager-request: "1"
 
-openUrl: http://127.0.0.1:59618/
+openUrl: http://127.0.0.1:62724/
