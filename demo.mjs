@@ -88,6 +88,8 @@ function loadConnectors() {
       injectHeaders: doc.injectHeaders || {},
       openUrl: doc.openUrl || null,
       livePath: doc.livePath || null,
+      // Shown when the plugin cannot be found and cannot be launched by us.
+      offlineHint: doc.offlineHint || null,
     })
   }
   out.sort((a, b) => a.id.localeCompare(b.id))
@@ -564,6 +566,8 @@ async function buildConfig(connectors) {
         launchHint: c.launch && c.launch.command
           ? [c.launch.command, ...(c.launch.args || [])].join(' ')
           : null,
+        // Explanation for "cannot be found and we must not start it".
+        offlineHint: c.offlineHint || null,
       }
     }),
   }

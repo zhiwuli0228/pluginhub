@@ -4,6 +4,10 @@
 # server, whose port changes on every restart. So the port is never written
 # down — PluginHub reads DSH_WEB_URL when present, otherwise scans this
 # machine's listening ports and fingerprints the token-usage API.
+#
+# Deliberately NO `launch`: the endpoint only exists while DSH itself is
+# running (web or desktop). PluginHub must not start a DSH instance on its own;
+# it just reports that the host is down.
 
 id: token-usage-statistic
 name: Token 用量统计
@@ -20,14 +24,8 @@ discover:
     expectStatus: 200
     expectJsonKey: totals
 
-launch:
-  # Starting the endpoint means starting its host. Opt-in: only runs when the
-  # user clicks 启动 and nothing was discovered.
-  command: dsh
-  args:
-    - web
-  shell: true
-  readyTimeoutMs: 90000
+# Shown when the plugin cannot be found: explains what the user has to do.
+offlineHint: 需要先启动 DSH（Web 或桌面版）。该插件的路由挂在 DSH 的 webServer 上，PluginHub 不会代为拉起宿主。
 
 panelPath: /token-usage-statistic/panel
 

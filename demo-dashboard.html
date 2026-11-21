@@ -100,6 +100,8 @@ function render() {
       if (c.launchHint) {
         frames += '<div class="hint">启动命令：<code>' + esc(c.launchHint) + '</code><br>' +
                   'PluginHub 会在本机拉起这个命令，然后等它的指纹接口就绪。</div>';
+      } else if (c.offlineHint) {
+        frames += '<div class="hint">' + esc(c.offlineHint) + '</div>';
       }
       if (c.canLaunch) {
         frames += '<button id="launch-' + esc(c.id) + '" onclick="launchConnector(\'' + esc(c.id) + '\')">▶ 启动</button>';

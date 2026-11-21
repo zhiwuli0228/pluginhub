@@ -85,6 +85,26 @@ launch:                   # 找不到时，用什么命令把它拉起来
 
 API：`POST /api/launch/<id>`；重新扫描：`POST /api/rediscover`。
 
+### 3.1 谁能被拉起，谁不能（重要）
+
+**规则：只有"插件自己拥有独立进程"才能由 PluginHub 启动。**
+
+| 插件类型 | 能否自动拉起 | 原因 |
+|---|---|---|
+| 独立进程（Memory Hub 的 `memory-hub serve`） | ✅ 能 | 它自己就是一个服务，拉起它就是拉起插件本身 |
+| MCP stdio server | ✅ 能（隐式） | 首次调用时按需 spawn，属于插件自己的协议 |
+| **挂在宿主里的插件（DSH 的 token-usage / env-manager）** | ❌ **不能** | 它们没有独立进程；端点存在的前提是 **DSH 本身在运行**。代拉起等于替用户启动 DSH，越权 |
+
+对不能拉起的情况，连接器**不写 `launch`**，改写 `offlineHint` 说明用户该做什么：
+
+```yaml
+offlineHint: 需要先启动 DSH（Web 或桌面版）。该插件的路由挂在 DSH 的 webServer 上，PluginHub 不会代为拉起宿主。
+```
+
+UI 表现：显示错误原因 + 该提示 + **只有「重新扫描本机」**，没有「启动」按钮。
+若对这类连接器调用 `POST /api/launch/<id>`，服务端返回
+`{ ok: false, error: "该连接器没有配置 launch 命令" }`。
+
 ---
 
 ## 4. 实测结果

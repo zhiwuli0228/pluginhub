@@ -3,6 +3,9 @@
 # Same story as token-usage-statistic: the routes live on the DSH web server, so
 # the origin is discovered rather than configured. Its API also requires a
 # request header, injected at the proxy layer.
+#
+# Deliberately NO `launch`: starting the endpoint would mean starting DSH
+# itself, which is the user's call, not PluginHub's.
 
 id: dsh-env-manager
 name: 环境管理器
@@ -21,12 +24,7 @@ discover:
     expectStatus: 200
     expectBodyContains: 环境管理器
 
-launch:
-  command: dsh
-  args:
-    - web
-  shell: true
-  readyTimeoutMs: 90000
+offlineHint: 需要先启动 DSH（Web 或桌面版）。该插件的路由挂在 DSH 的 webServer 上，PluginHub 不会代为拉起宿主。
 
 panelPath: /env-manager/panel
 
