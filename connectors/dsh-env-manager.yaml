@@ -1,26 +1,38 @@
-# Connector: dsh-env-manager
+# Connector: dsh-env-manager (hosted inside DSH)
 #
-# Tier 0 contract — the plugin serves its own panel page (`/env-manager/panel`,
-# added in 0.2.0). Its API additionally requires a request header, injected at
-# the proxy layer.
+# Same story as token-usage-statistic: the routes live on the DSH web server, so
+# the origin is discovered rather than configured. Its API also requires a
+# request header, injected at the proxy layer.
 
 id: dsh-env-manager
 name: 环境管理器
 icon: "🔧"
 
-upstream: http://127.0.0.1:62724
+upstream: auto
+
+discover:
+  env:
+    - DSH_WEB_URL
+  probe:
+    # The panel page is unique to this plugin, so a marker in its HTML is a
+    # strong fingerprint.
+    path: /env-manager/panel
+    method: GET
+    expectStatus: 200
+    expectBodyContains: 环境管理器
+
+launch:
+  command: dsh
+  args:
+    - web
+  shell: true
+  readyTimeoutMs: 90000
 
 panelPath: /env-manager/panel
 
 pathPrefixes:
   - /env-manager/
 
-health:
-  path: /env-manager/panel
-  method: GET
-
 # Header the plugin's API requires on every request.
 injectHeaders:
   x-env-manager-request: "1"
-
-openUrl: http://127.0.0.1:62724/

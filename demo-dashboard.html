@@ -26,7 +26,10 @@ body{background:#0f0f1a;color:#e0e0e0;font-family:'Segoe UI',system-ui,sans-seri
 .offline{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:#888;padding:40px}
 .offline h3{color:#ef4444;margin:12px 0 8px;font-size:1.15rem}
 .offline p{max-width:560px;line-height:1.7;font-size:.85rem}
-.offline .hint{margin-top:14px;color:#666;font-size:.78rem;line-height:1.8;text-align:left;background:#12121f;padding:12px 16px;border-radius:8px}
+.offline .hint{margin-top:14px;color:#666;font-size:.78rem;line-height:1.8;text-align:left;background:#12121f;padding:12px 16px;border-radius:8px;max-width:640px;white-space:pre-wrap;font-family:inherit}
+.offline .hint code{font-family:'Cascadia Code','Fira Code',monospace;color:#8ab4f8;background:#0f0f1a;padding:2px 6px;border-radius:4px;font-size:.75rem}
+.offline button.ghost{background:transparent;border:1px solid #2a2a4a;color:#9ca3af}
+.offline button.ghost:hover{background:#1a1a2e;color:#e0e0e0}
 .offline button{margin-top:18px;padding:8px 20px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:.85rem}
 .live{height:100%;overflow:auto;padding:22px 26px}
 .live h2{font-size:1.15rem;color:#e0e0e0;margin-bottom:6px}
@@ -80,7 +83,10 @@ function render() {
 
   for (var i = 0; i < CONNECTORS.length; i++) {
     var c = CONNECTORS[i];
+    var tip = (c.endpoint || (c.mode === 'mcp' ? 'MCP stdio' : '未发现')) +
+              (c.endpointSource ? ' · 来源: ' + c.endpointSource : '');
     tabs += '<div class="tab' + (c.id === cur ? ' active' : '') + '" data-id="' + esc(c.id) + '"' +
+            ' title="' + esc(tip) + '"' +
             ' onclick="switchTab(\'' + esc(c.id) + '\', this)">' +
             '<span>' + c.icon + '</span> ' + esc(c.name) +
             '<span class="dot ' + (c.online ? 'g' : 'r') + '" title="' +
@@ -90,11 +96,17 @@ function render() {
     if (!c.online) {
       frames += '<div class="offline"><div style="font-size:3rem">' + c.icon + '</div>' +
                 '<h3>' + esc(c.name) + ' 未连接</h3>' +
-                '<p>' + esc(c.error || '上游不可达') + '</p>' +
-                '<div class="hint">检查：<br>• 上游服务是否运行（' + esc(c.openUrl || '') + '）<br>' +
-                '• 插件是否已在宿主中启用<br>' +
-                '• 若刚更新插件代码，需要重启宿主进程使其加载新路由</div>' +
-                '<button onclick="location.reload()">🔄 重试</button></div>';
+                '<p>' + esc(c.error || '未在本机发现该插件') + '</p>';
+      if (c.launchHint) {
+        frames += '<div class="hint">启动命令：<code>' + esc(c.launchHint) + '</code><br>' +
+                  'PluginHub 会在本机拉起这个命令，然后等它的指纹接口就绪。</div>';
+      }
+      if (c.canLaunch) {
+        frames += '<button id="launch-' + esc(c.id) + '" onclick="launchConnector(\'' + esc(c.id) + '\')">▶ 启动</button>';
+      }
+      frames += '<button class="ghost" onclick="rediscover()" style="margin-left:8px">🔄 重新扫描本机</button>';
+      frames += '<div id="launchmsg-' + esc(c.id) + '" class="hint" style="display:none"></div>';
+      frames += '</div>';
     } else if (c.mode === 'iframe' || c.mode === 'mcp') {
       frames += '<iframe src="' + esc(c.url) + '" title="' + esc(c.name) + '"></iframe>';
     } else {
@@ -137,6 +149,53 @@ function switchTab(id, el) {
   for (var i = 0; i < tabs.length; i++) tabs[i].classList.remove('active');
   if (el) el.classList.add('active');
   if (history.replaceState) history.replaceState(null, '', '?tab=' + encodeURIComponent(id));
+}
+
+function setLaunchMsg(id, text, isError) {
+  var el = document.getElementById('launchmsg-' + id);
+  if (!el) return;
+  el.style.display = 'block';
+  el.style.color = isError ? '#fca5a5' : '#86efac';
+  el.textContent = text;
+}
+
+function launchConnector(id) {
+  var btn = document.getElementById('launch-' + id);
+  if (btn) { btn.disabled = true; btn.textContent = '启动中…'; }
+  setLaunchMsg(id, '正在执行启动命令并等待就绪…', false);
+
+  fetch('/api/launch/' + encodeURIComponent(id), { method: 'POST' })
+    .then(function (r) { return r.json() })
+    .then(function (d) {
+      if (d.ok) {
+        setLaunchMsg(id, '已启动' + (d.origin ? ' → ' + d.origin : '') +
+                    (d.waitedMs ? '（' + Math.round(d.waitedMs / 1000) + 's）' : '') + '，刷新中…', false);
+        setTimeout(function () { location.reload() }, 1200);
+      } else {
+        var msg = '启动失败：' + (d.error || '未知错误');
+        if (d.stderr) msg += '\n' + d.stderr;
+        setLaunchMsg(id, msg, true);
+        if (btn) { btn.disabled = false; btn.textContent = '▶ 启动'; }
+      }
+    })
+    .catch(function (e) {
+      setLaunchMsg(id, '请求失败：' + e.message, true);
+      if (btn) { btn.disabled = false; btn.textContent = '▶ 启动'; }
+    });
+}
+
+function rediscover() {
+  fetch('/api/rediscover', { method: 'POST' })
+    .then(function (r) { return r.json() })
+    .then(function () { location.reload() })
+    .catch(function () { location.reload() });
+}
+
+function showEndpoint(el, c) {
+  var parts = [];
+  if (c.endpoint) parts.push(c.endpoint);
+  if (c.endpointSource) parts.push('来源: ' + c.endpointSource);
+  el.title = parts.join('  ·  ');
 }
 
 function updateHeader() {

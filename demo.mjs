@@ -77,12 +77,16 @@ function loadConnectors() {
       icon: doc.icon || '🔌',
       kind: doc.kind === 'mcp' ? 'mcp' : 'panel',
       mcp: doc.mcp || null,
-      upstream: String(doc.upstream || ''),
+      // `upstream` may be a literal origin, or the string `auto` meaning
+      // "discover it on this machine".
+      upstreamRaw: doc.upstream == null ? 'auto' : String(doc.upstream),
+      discover: doc.discover || null,
+      launch: doc.launch || null,
       panelPath: doc.panelPath || null,
       pathPrefixes: Array.isArray(doc.pathPrefixes) ? doc.pathPrefixes.map(String) : [],
       health: doc.health || null,
       injectHeaders: doc.injectHeaders || {},
-      openUrl: doc.openUrl || doc.upstream || '',
+      openUrl: doc.openUrl || null,
       livePath: doc.livePath || null,
     })
   }
@@ -100,25 +104,107 @@ function parseUpstream(origin) {
   }
 }
 
-// ── MCP sessions (Tier 2: third-party servers that only speak MCP) ───────────
+// ── Origin resolution (local discovery) ──────────────────────────────────────
+
+/** connectorId → { origin, source, at } */
+const resolved = new Map()
+const RESOLVE_TTL_MS = 15000
+
+/**
+ * Resolve (and cache) the origin a connector should be addressed at.
+ *
+ * A literal `upstream` wins. `auto` resolves against this machine: env hints,
+ * then port hints, then a listening-port scan — all validated by fingerprint.
+ */
+async function resolveConnector(connector, force = false) {
+  if (connector.kind === 'mcp') return { origin: null, source: null }
+
+  if (connector.upstreamRaw && connector.upstreamRaw !== 'auto') {
+    return { origin: connector.upstreamRaw.replace(/\/$/, ''), source: 'configured' }
+  }
+
+  const cached = resolved.get(connector.id)
+  if (!force && cached && Date.now() - cached.at < RESOLVE_TTL_MS) return cached
+
+  const rt = await loadRuntime()
+  const discover = connector.discover || (connector.panelPath ? { probe: { path: connector.panelPath } } : null)
+  const result = await rt.resolveOrigin(discover)
+  const record = { ...result, at: Date.now() }
+  resolved.set(connector.id, record)
+  return record
+}
+
+/** Forget a connector's resolved origin so the next request re-discovers. */
+function invalidateResolution(id) {
+  resolved.delete(id)
+}
+
+// ── Launch ───────────────────────────────────────────────────────────────────
+
+/** Launch a plugin's web endpoint, then re-resolve where it landed. */
+async function launchConnector(connector) {
+  const spec = connector.launch
+  if (!spec || !spec.command) {
+    return { ok: false, error: '该连接器没有配置 launch 命令' }
+  }
+
+  // Never spawn a duplicate: if the plugin already answers somewhere on this
+  // machine, point at that instance instead of starting another one.
+  const already = await resolveConnector(connector, true)
+  if (already.origin) {
+    return { ok: true, alreadyRunning: true, origin: already.origin, source: already.source }
+  }
+
+  const rt = await loadRuntime()
+  const discover = connector.discover || (connector.panelPath ? { probe: { path: connector.panelPath } } : null)
+  const probe = (discover && discover.probe) || null
+
+  // Poll the declared port hints, plus whatever was previously resolved.
+  const hosts = (discover && discover.hosts) || ['127.0.0.1']
+  const ports = (discover && discover.ports) || []
+  const origins = []
+  for (const h of hosts) for (const p of ports) origins.push(`http://${h}:${p}`)
+  const prev = resolved.get(connector.id)
+  if (prev && prev.origin) origins.unshift(prev.origin)
+  if (!origins.length) {
+    return { ok: false, error: '连接器需要 discover.ports 或已有解析结果才能判断启动是否成功' }
+  }
+
+  const result = await rt.launchAndWait(spec, probe, origins)
+  invalidateResolution(connector.id)
+
+  if (result.started) {
+    const after = await resolveConnector(connector, true)
+    return {
+      ok: true,
+      pid: result.pid,
+      waitedMs: result.waitedMs,
+      origin: after.origin,
+      source: after.source || 'launched',
+    }
+  }
+  return { ok: false, error: result.error || '启动失败', stderr: result.stderr, pid: result.pid }
+}
+
+// ── Runtime module (MCP client + local detect), bundled on startup ───────────
 
 const inspectorHtml = readFileSync(join(__dirname, 'inspector.html'), 'utf-8')
 
-let McpClientCtor = null
-let mcpClientLoadError = null
+let runtime = null
+let runtimeError = null
 
 /**
- * Build the tested core MCP client (`src/core/mcp`) into a temporary ESM module
- * and import it. Building in memory avoids a separate build step while still
- * reusing the P1 client instead of duplicating protocol code here.
+ * Bundle `src/demo-runtime.ts` (tested core modules) into a temporary ESM file
+ * and import it. Building in memory avoids a separate build step and keeps the
+ * demo from duplicating protocol or detection logic.
  */
-async function loadMcpClient() {
-  if (McpClientCtor) return McpClientCtor
-  if (mcpClientLoadError) throw mcpClientLoadError
+async function loadRuntime() {
+  if (runtime) return runtime
+  if (runtimeError) throw runtimeError
   try {
     const { build } = await import('esbuild')
     const result = await build({
-      entryPoints: [join(__dirname, 'src/core/mcp/index.ts')],
+      entryPoints: [join(__dirname, 'src/demo-runtime.ts')],
       bundle: true,
       format: 'esm',
       platform: 'node',
@@ -127,13 +213,12 @@ async function loadMcpClient() {
       logLevel: 'silent',
     })
     const out = result.outputFiles[0].text
-    const tmp = join(tmpdir(), `pluginhub-mcp-client-${process.pid}.mjs`)
+    const tmp = join(tmpdir(), `pluginhub-runtime-${process.pid}.mjs`)
     writeFileSync(tmp, out, 'utf-8')
-    const mod = await import(pathToFileURL(tmp).href)
-    McpClientCtor = mod.McpStdioClient
-    return McpClientCtor
+    runtime = await import(pathToFileURL(tmp).href)
+    return runtime
   } catch (e) {
-    mcpClientLoadError = e
+    runtimeError = e
     throw e
   }
 }
@@ -164,8 +249,8 @@ async function getMcpSession(connector) {
   }
   if (!cfg.command) throw new Error('connector.mcp.command is required for stdio transport')
 
-  const Client = await loadMcpClient()
-  const client = new Client({
+  const rt = await loadRuntime()
+  const client = new rt.McpStdioClient({
     command: cfg.command,
     args: Array.isArray(cfg.args) ? cfg.args.map(String) : [],
     cwd: cfg.cwd || undefined,
@@ -244,10 +329,12 @@ async function checkHealth(connector) {
     return { online: true, state: 'idle' }
   }
 
-  const target = parseUpstream(connector.upstream)
-  if (!target) return { online: false, error: `bad upstream: ${connector.upstream}` }
+  const res = await resolveConnector(connector)
+  if (!res.origin) {
+    return { online: false, error: res.error || '未在本机发现该插件', resolution: res }
+  }
 
-  const base = connector.upstream.replace(/\/$/, '')
+  const base = res.origin
 
   if (connector.panelPath) {
     try {
@@ -260,21 +347,23 @@ async function checkHealth(connector) {
         return {
           online: false,
           status: r.status,
+          origin: base,
+          source: res.source,
           error: `面板不可达：${connector.panelPath} → HTTP ${r.status}`,
         }
       }
       const ct = String(r.headers.get('content-type') || '')
       if (!ct.includes('text/html')) {
-        return { online: false, status: r.status, error: `面板内容类型异常：${ct || '(none)'}` }
+        return { online: false, status: r.status, origin: base, source: res.source, error: `面板内容类型异常：${ct || '(none)'}` }
       }
-      return { online: true, status: r.status }
+      return { online: true, status: r.status, origin: base, source: res.source }
     } catch (e) {
-      return { online: false, error: `面板不可达：${e.message}` }
+      return { online: false, origin: base, source: res.source, error: `面板不可达：${e.message}` }
     }
   }
 
   const h = connector.health
-  if (!h || !h.path) return { online: true }
+  if (!h || !h.path) return { online: true, origin: base, source: res.source }
 
   const headers = { ...(h.headers || {}) }
   const init = { method: h.method || 'GET', headers, signal: AbortSignal.timeout(4000) }
@@ -284,9 +373,9 @@ async function checkHealth(connector) {
     const r = await fetch(`${base}${h.path}`, init)
     // 401/403 still proves something is listening with the right routes.
     const online = r.ok || r.status === 401 || r.status === 403
-    return { online, status: r.status }
+    return { online, status: r.status, origin: base, source: res.source }
   } catch (e) {
-    return { online: false, error: e.message }
+    return { online: false, origin: base, source: res.source, error: e.message }
   }
 }
 
@@ -299,10 +388,10 @@ async function checkHealth(connector) {
  * plugin sees exactly the route it published.
  */
 function proxyRequest(req, res, connector, rest, search) {
-  const target = parseUpstream(connector.upstream)
+  const target = parseUpstream(connector._resolvedOrigin || '')
   if (!target) {
     res.writeHead(502, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ error: 'bad-upstream', upstream: connector.upstream }))
+    res.end(JSON.stringify({ error: 'unresolved-upstream', connector: connector.id }))
     return
   }
 
@@ -445,26 +534,38 @@ function rewritePanel(html, connector) {
 async function buildConfig(connectors) {
   const health = await Promise.all(connectors.map(checkHealth))
   return {
-    connectors: connectors.map((c, i) => ({
-      id: c.id,
-      name: c.name,
-      icon: c.icon,
-      mode: c.kind === 'mcp' ? 'mcp' : c.panelPath ? 'iframe' : 'live',
-      url:
-        c.kind === 'mcp'
-          ? `/mcp?id=${encodeURIComponent(c.id)}`
-          : c.panelPath
-            ? `/p/${c.id}${c.panelPath}`
-            : c.livePath
-              ? `/p/${c.id}${c.livePath}`
-              : null,
-      openUrl: c.openUrl,
-      online: health[i].online,
-      error: health[i].error,
-      status: health[i].status,
-      state: health[i].state,
-      toolCount: health[i].toolCount,
-    })),
+    connectors: connectors.map((c, i) => {
+      const h = health[i]
+      const resolvedOrigin = h.origin || null
+      c._resolvedOrigin = resolvedOrigin
+      return {
+        id: c.id,
+        name: c.name,
+        icon: c.icon,
+        mode: c.kind === 'mcp' ? 'mcp' : c.panelPath ? 'iframe' : 'live',
+        url:
+          c.kind === 'mcp'
+            ? `/mcp?id=${encodeURIComponent(c.id)}`
+            : resolvedOrigin && c.panelPath
+              ? `/p/${c.id}${c.panelPath}`
+              : resolvedOrigin && c.livePath
+                ? `/p/${c.id}${c.livePath}`
+                : null,
+        openUrl: c.openUrl || (resolvedOrigin ? resolvedOrigin + (c.panelPath || '/') : null),
+        online: h.online,
+        error: h.error,
+        status: h.status,
+        state: h.state,
+        toolCount: h.toolCount,
+        // Transparency: where did this endpoint come from, and can we start it?
+        endpoint: resolvedOrigin,
+        endpointSource: h.source || null,
+        canLaunch: Boolean(c.kind !== 'mcp' && c.launch && c.launch.command && !h.online),
+        launchHint: c.launch && c.launch.command
+          ? [c.launch.command, ...(c.launch.args || [])].join(' ')
+          : null,
+      }
+    }),
   }
 }
 
@@ -482,12 +583,17 @@ async function main() {
           : c.livePath
             ? `live ${c.livePath}`
             : 'no panel'
-    const upstream = c.kind === 'mcp' ? '' : c.upstream
-    console.log(`   ${c.icon} ${c.id.padEnd(24)} ${upstream.padEnd(28)} ${mode}`)
+    const where =
+      c.kind === 'mcp'
+        ? ''
+        : c.upstreamRaw === 'auto'
+          ? 'auto-discover'
+          : c.upstreamRaw
+    console.log(`   ${c.icon} ${c.id.padEnd(24)} ${String(where).padEnd(28)} ${mode}`)
   }
   console.log('')
 
-  const server = createServer((req, res) => {
+  const server = createServer(async (req, res) => {
     const url = new URL(req.url || '/', `http://127.0.0.1:${UI_PORT}`)
     const path = url.pathname
 
@@ -511,6 +617,32 @@ async function main() {
           res.writeHead(500, { 'Content-Type': 'application/json' })
           res.end(JSON.stringify({ error: e.message }))
         })
+      return
+    }
+
+    // ── Launch a plugin's web endpoint ─────────────────────────────────────
+    const launchMatch = /^\/api\/launch\/([^/]+)$/.exec(path)
+    if (launchMatch && req.method === 'POST') {
+      const id = decodeURIComponent(launchMatch[1])
+      const connector = connectors.find((c) => c.id === id)
+      if (!connector) {
+        sendJson(res, 404, { ok: false, error: `unknown connector: ${id}` })
+        return
+      }
+      launchConnector(connector)
+        .then((r) => sendJson(res, 200, r))
+        .catch((e) => sendJson(res, 200, { ok: false, error: e.message }))
+      return
+    }
+
+    // ── Re-run discovery for one connector or all ──────────────────────────
+    if (path === '/api/rediscover' && req.method === 'POST') {
+      resolved.clear()
+      const rt = await loadRuntime()
+      rt.invalidatePortCache()
+      buildConfig(connectors)
+        .then((cfg) => sendJson(res, 200, cfg))
+        .catch((e) => sendJson(res, 500, { error: e.message }))
       return
     }
 
@@ -585,7 +717,16 @@ async function main() {
         sendJson(res, 400, { error: 'mcp connectors are served at /mcp?id=<id>, not /p/<id>' })
         return
       }
-      proxyRequest(req, res, connector, rest, url.search)
+      resolveConnector(connector)
+        .then((r) => {
+          if (!r.origin) {
+            sendJson(res, 502, { error: 'unresolved-upstream', connector: connector.id, detail: r.error })
+            return
+          }
+          connector._resolvedOrigin = r.origin
+          proxyRequest(req, res, connector, rest, url.search)
+        })
+        .catch((e) => sendJson(res, 500, { error: e.message }))
       return
     }
 

@@ -1,21 +1,45 @@
-# Connector: agent-memory-hub
+# Connector: Agent Memory Hub
 #
-# Tier 0 contract — this plugin already shipped a standalone panel on its own
-# port, which is why it was the first one that worked end to end.
+# No hard-coded port. The hub can be served on any port, so PluginHub
+# discovers it: env hint → common ports → machine-wide listening-port scan,
+# each validated by fingerprint (a server that answers /api/status with a
+# `hubRoot` key IS a Memory Hub).
+#
+# If nothing answers, PluginHub can start it for you with `memory-hub serve`.
 
 id: agent-memory-hub
 name: Agent 记忆中心
 icon: "🧠"
 
-upstream: http://127.0.0.1:7777
+upstream: auto
+
+discover:
+  env:
+    - MEMORY_HUB_URL
+    - MEMHUB_URL
+  ports:
+    - 7777
+    - 7331
+  probe:
+    path: /api/status
+    method: GET
+    expectStatus: 200
+    expectJsonKey: hubRoot
+
+launch:
+  command: node
+  args:
+    - dist/cli.js
+    - serve
+    - --root
+    - E:\009workspace\dsh\dsh-plugin-dev
+    - --port
+    - "7331"
+  cwd: E:\009workspace\dsh\dsh-memory-hub\dsh-memory-hub
+  readyTimeoutMs: 45000
+  shutdownHint: memory-hub serve --stop
 
 panelPath: /panel
 
 pathPrefixes:
   - /api/
-
-health:
-  path: /api/status
-  method: GET
-
-openUrl: http://127.0.0.1:7777/panel

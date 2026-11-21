@@ -1,22 +1,35 @@
-# Connector: token-usage-statistic
+# Connector: token-usage-statistic (hosted inside DSH)
 #
-# Tier 0 contract — the plugin serves its own self-contained panel page
-# (`/token-usage-statistic/panel`, added in 1.1.0), so PluginHub only proxies
-# and embeds it. No re-rendering.
+# The plugin has no process of its own: its routes are mounted on the DSH web
+# server, whose port changes on every restart. So the port is never written
+# down — PluginHub reads DSH_WEB_URL when present, otherwise scans this
+# machine's listening ports and fingerprints the token-usage API.
 
 id: token-usage-statistic
 name: Token 用量统计
 icon: "📊"
 
-upstream: http://127.0.0.1:62724
+upstream: auto
+
+discover:
+  env:
+    - DSH_WEB_URL
+  probe:
+    path: /token-usage-statistic/api/summary?days=1
+    method: GET
+    expectStatus: 200
+    expectJsonKey: totals
+
+launch:
+  # Starting the endpoint means starting its host. Opt-in: only runs when the
+  # user clicks 启动 and nothing was discovered.
+  command: dsh
+  args:
+    - web
+  shell: true
+  readyTimeoutMs: 90000
 
 panelPath: /token-usage-statistic/panel
 
 pathPrefixes:
   - /token-usage-statistic/
-
-health:
-  path: /token-usage-statistic/panel
-  method: GET
-
-openUrl: http://127.0.0.1:62724/
